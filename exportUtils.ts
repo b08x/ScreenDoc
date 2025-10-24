@@ -92,3 +92,62 @@ export const downloadFile = (filename: string, content: string, mimeType: string
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 };
+
+export const markdownToRtf = (markdown: string): string => {
+  if (!markdown) return '';
+
+  const escapeRtf = (str: string) => {
+    return str.replace(/\\/g, '\\\\').replace(/{/g, '\\{').replace(/}/g, '\\}');
+  };
+
+  let rtfContent = markdown;
+
+  // Process slides first by replacing splitter with a page break
+  const slides = rtfContent.split(/\n---\n/);
+  if (slides.length > 1) {
+    rtfContent = slides.join('\\page ');
+  }
+
+  // Process line by line for lists and headers
+  const lines = rtfContent.split('\n');
+  const rtfLines = lines.map(line => {
+    let rtfLine = escapeRtf(line.trim());
+
+    // Headers
+    if (rtfLine.startsWith('# ')) {
+      return `{\\pard\\sa200\\sl276\\slmult1\\b\\f0\\fs32 ${rtfLine.substring(2)}\\par}`;
+    }
+    if (rtfLine.startsWith('## ')) {
+      return `{\\pard\\sa200\\sl276\\slmult1\\b\\f0\\fs28 ${rtfLine.substring(3)}\\par}`;
+    }
+    if (rtfLine.startsWith('### ')) {
+      return `{\\pard\\sa200\\sl276\\slmult1\\b\\f0\\fs24 ${rtfLine.substring(4)}\\par}`;
+    }
+    
+    // Unordered List
+    if (rtfLine.match(/^[-*] /)) {
+        return `{\\pard\\fi-360\\li720 {\\pntext\\f0\\'B7\\tab} ${rtfLine.substring(2)}\\par}`;
+    }
+    
+    // Ordered List
+    const olMatch = rtfLine.match(/^(\d+)\. /);
+    if (olMatch) {
+        return `{\\pard\\fi-360\\li720 {\\pntext\\f0 ${olMatch[1]}.\\tab} ${rtfLine.substring(olMatch[0].length)}\\par}`;
+    }
+
+    // Bold and Italic (within a line)
+    rtfLine = rtfLine.replace(/\*\*(.*?)\*\*/g, '{\\b $1}');
+    rtfLine = rtfLine.replace(/\*(.*?)\*/g, '{\\i $1}');
+    
+    // Image placeholders
+    rtfLine = rtfLine.replace(
+        /\[Image: (.*?)(?:\s+at\s+[0-9:.]+)?\]/g,
+        '{\\pard\\qc\\i [Image: $1]\\par}',
+    );
+
+    // Default paragraph
+    return `{\\pard\\sa200\\sl276\\slmult1\\f0\\fs22 ${rtfLine}\\par}`;
+  });
+
+  return `{\\rtf1\\ansi\\deff0\n${rtfLines.join('\n')}\n}`;
+};

@@ -17,7 +17,8 @@
     "classnames": "^2.5.1",
     "@google/generative-ai": "^0.24.0",
     "d3-scale": "^4.0.2",
-    "mermaid": "^10.9.0"
+    "mermaid": "^10.9.0",
+    "jszip": "3.10.1"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

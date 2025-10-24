@@ -53,7 +53,7 @@ function StyledMarkdown({content}: {content: string}) {
         html = html.replace(/<\/li>$/, '</li></ul>');
         // Image placeholders
         html = html.replace(
-            /\[Image: (.*?)\]/gim,
+            /\[Image: (.*?)(?:\s+at\s+[0-9:.]+)?\]/gim,
             '<div class="image-placeholder">🖼️ $1</div>',
         );
         // Newlines

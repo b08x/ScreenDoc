@@ -266,6 +266,7 @@ header p {
 .output-actions {
     display: flex;
     gap: 0.5rem;
+    flex-wrap: wrap;
 }
 
 .error-message {
@@ -721,4 +722,52 @@ video {
 .modal-footer button.primary:hover {
     opacity: 0.9;
     background: var(--primary);
+}
+
+/* Print Styles */
+@media print {
+  body > * {
+    visibility: hidden;
+  }
+  .panel.output-panel, .panel.output-panel * {
+    visibility: visible;
+  }
+  .panel.output-panel {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: auto;
+    border: none !important;
+    overflow: visible;
+    flex: none; /* Override flex properties */
+  }
+
+  /* Hide UI elements */
+  header, .input-panel, .panel-header, .editor-tabs, .modal-overlay {
+    display: none !important;
+  }
+
+  /* Make content take full space */
+  .container {
+    display: block;
+  }
+  .panel-content {
+      overflow: visible;
+      padding: 0 !important;
+  }
+  .editor-preview, .markdown-editor, .editor-content {
+      overflow: visible;
+      height: auto;
+      display: block;
+  }
+  .markdown-content .slide {
+    page-break-after: always; /* Each slide on a new page */
+    border: 1px solid #ccc !important; /* Make border visible on print */
+  }
+  .mermaid-content svg {
+    max-width: 100%;
+    width: 100%;
+    height: auto;
+  }
 }

@@ -19,7 +19,10 @@
 
 import c from 'classnames';
 import {useRef, useState} from 'react';
+import JSZip from 'jszip';
+import {timeToSecs} from './utils';
 import {transcribeVideo, generateGuide, generateTimecodedCaptions, DiarizedSegment, Caption} from './api';
+import { markdownToRtf } from './exportUtils';
 import VideoPlayer from './VideoPlayer.jsx';
 import MarkdownEditor from './MarkdownEditor';
 import TranscriptEditor from './TranscriptEditor';
@@ -105,6 +108,59 @@ const simulateShortProgress = (onProgress: (percent: number) => void): Promise<v
     });
 };
 
+// Helper function to extract a frame from a video at a specific time
+const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.style.display = 'none';
+    video.muted = true;
+    video.crossOrigin = 'anonymous';
+
+    const onSeeked = () => {
+      video.removeEventListener('seeked', onSeeked);
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Canvas to Blob conversion failed.'));
+          }
+          document.body.removeChild(video);
+        }, 'image/png');
+      } else {
+        reject(new Error('Could not get canvas context.'));
+        document.body.removeChild(video);
+      }
+    };
+
+    const onLoadedMetadata = () => {
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      if (time > video.duration) {
+          console.warn(`Seek time ${time} is beyond video duration ${video.duration}. Clamping to duration.`);
+          video.currentTime = video.duration;
+      } else {
+          video.currentTime = time;
+      }
+    };
+
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', (e) => {
+        reject(new Error(`Video loading error`));
+        document.body.removeChild(video);
+    });
+
+    video.src = videoUrl;
+    document.body.appendChild(video);
+    video.load();
+  });
+};
+
 
 export default function App() {
   const [theme] = useState(
@@ -131,6 +187,7 @@ export default function App() {
   // Loading states
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isZipping, setIsZipping] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [progress, setProgress] = useState(0);
 
@@ -152,6 +209,7 @@ export default function App() {
     setGeneratedContent('');
     setIsProcessingVideo(false);
     setIsGenerating(false);
+    setIsZipping(false);
     setLoadingMessage('');
     setProgress(0);
     setPendingFile(null);
@@ -323,6 +381,110 @@ export default function App() {
     URL.revokeObjectURL(url);
   };
 
+  const handleExportZip = async () => {
+    if (!generatedContent || !videoUrl) return;
+
+    setIsZipping(true);
+    setError('');
+
+    try {
+        const zip = new JSZip();
+        const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
+        
+        if (imagePlaceholders.length === 0) {
+            const fileExtension = outputFormat === 'diagram' ? 'mmd' : 'md';
+            zip.file(`output.${fileExtension}`, generatedContent);
+        } else {
+            let updatedContent = generatedContent;
+            const imagePromises: Promise<{ blob: Blob; index: number }>[] = [];
+            
+            imagePlaceholders.forEach((match, index) => {
+                const timecode = match[2];
+                const seconds = timeToSecs(timecode);
+                const promise = extractFrame(videoUrl, seconds).then(blob => ({ blob, index }));
+                imagePromises.push(promise);
+            });
+
+            const imageResults = await Promise.all(imagePromises);
+
+            for (const result of imageResults) {
+                const { blob, index } = result;
+                const match = imagePlaceholders[index];
+                const imageName = `image-${index + 1}.png`;
+                zip.file(`images/${imageName}`, blob);
+                
+                const placeholder = match[0];
+                const description = match[1];
+                updatedContent = updatedContent.replace(placeholder, `![${description}](./images/${imageName})`);
+            }
+            
+            zip.file(`guide.md`, updatedContent);
+        }
+
+        const zipBlob = await zip.generateAsync({type: 'blob'});
+
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(zipBlob);
+        a.download = 'ScreenGuide-Export.zip';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(a.href);
+
+    } catch (e) {
+        console.error("Error creating zip file:", e);
+        setError("Failed to create zip file. Could not extract frames from video.");
+    } finally {
+        setIsZipping(false);
+    }
+  };
+
+  const handleExportPdf = () => {
+    window.print();
+  };
+
+  const handleExportRtf = () => {
+      const rtfContent = markdownToRtf(generatedContent);
+      const blob = new Blob([rtfContent], { type: 'application/rtf' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `ScreenGuide-Output.rtf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
+  const handleExportSessionData = () => {
+      const sessionData = {
+          userContext: {
+              videoDescription: videoDescription,
+              userPrompt: userPrompt,
+          },
+          rawData: {
+              diarizedTranscript: diarizedTranscript,
+              timecodedCaptions: timecodedCaptions,
+          },
+          generatedOutput: {
+              format: outputFormat,
+              content: generatedContent,
+          },
+          timestamp: new Date().toISOString(),
+      };
+      const jsonContent = JSON.stringify(sessionData, null, 2);
+      const blob = new Blob([jsonContent], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'ScreenGuide-Session.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+  };
+
+
   const onDrop = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
@@ -444,6 +606,16 @@ export default function App() {
               <div className="output-actions">
                 <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
                 <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
+                {outputFormat !== 'diagram' && (
+                    <button onClick={handleExportZip} disabled={isZipping}>
+                        <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
+                    </button>
+                )}
+                <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
+                {outputFormat !== 'diagram' && (
+                    <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
+                )}
+                <button onClick={handleExportSessionData}><span className="icon">dataset</span> Export Session</button>
               </div>
             )}
           </div>

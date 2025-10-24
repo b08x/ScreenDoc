@@ -169,13 +169,13 @@ async function generateGuide({videoBase64, mimeType, transcript, description, pr
 
   switch (format) {
     case 'guide':
-      formatInstruction = 'A step-by-step guide with numbered lists and placeholders for screenshots like [Image: description of the visual].';
+      formatInstruction = "A step-by-step guide with numbered lists and placeholders for screenshots. The placeholder format MUST be `[Image: description of the visual at HH:MM:SS.sss]`. The timecode should be the exact moment in the video the visual appears.";
       break;
     case 'article':
-      formatInstruction = 'A knowledge base article with structured headings, subheadings, paragraphs, and bullet points.';
+      formatInstruction = "A knowledge base article with structured headings, subheadings, paragraphs, and bullet points. If screenshots are relevant, include placeholders in the format `[Image: description of the visual at HH:MM:SS.sss]`. The timecode should be the exact moment in the video the visual appears.";
       break;
     case 'slides':
-      formatInstruction = "A presentation with a title slide, an agenda, and multiple content slides. Separate each slide with '---'. Use markdown headers for slide titles and bullet points for content. For example:\n# Slide Title\n- Point 1\n- Point 2\n---";
+      formatInstruction = "A presentation with a title slide, an agenda, and multiple content slides. Separate each slide with '---'. Use markdown headers for slide titles and bullet points for content. If screenshots are relevant, include placeholders in the format `[Image: description of the visual at HH:MM:SS.sss]`. The timecode should be the exact moment in the video the visual appears. For example:\n# Slide Title\n- Point 1\n- [Image: Login screen at 00:00:12.345]\n- Point 2\n---";
       break;
     case 'diagram':
       formatInstruction = "A flowchart diagram in Mermaid syntax (using 'graph TD' for a top-down chart) that visually represents the process shown in the video. The output should ONLY be the raw Mermaid code, without the markdown ```mermaid ... ``` wrapper.";
