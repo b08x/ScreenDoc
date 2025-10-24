@@ -4,7 +4,7 @@
 */
 /* tslint:disable */
 
-import {GoogleGenAI, FunctionDeclaration, Type, Content, GenerateContentResponse} from '@google/genai';
+import {GoogleGenAI, FunctionDeclaration, Type} from '@google/genai';
 
 const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
@@ -19,11 +19,6 @@ export interface DiarizedSegment {
   startTime: string; // e.g., "00:01:23.456"
   endTime: string;
   text: string;
-}
-
-export interface GroundingSource {
-    uri: string;
-    title: string;
 }
 
 const setDiarizedTranscriptFunctionDeclaration: FunctionDeclaration = {
@@ -168,7 +163,7 @@ async function generateTimecodedCaptions({ videoBase64, mimeType, description, u
 }
 
 
-async function generateGuide({videoBase64, mimeType, transcript, description, prompt, format, context}: { videoBase64: string; mimeType: string; transcript: string; description: string; prompt: string; format: string; context?: string; }) {
+async function generateGuide({videoBase64, mimeType, transcript, description, prompt, format}: { videoBase64: string; mimeType: string; transcript: string; description: string; prompt: string; format: string; }) {
   const model = 'gemini-2.5-pro';
   let formatInstruction: string;
 
@@ -200,10 +195,6 @@ ${description || 'Not provided.'}
 ---
 Audio Transcription (user-reviewed):
 ${transcript}
-
----
-Additional Context from AI Assistant Chat:
-${context || 'Not provided.'}
 
 ---
 Desired Output Format:
@@ -238,54 +229,38 @@ Please generate the final content. For Markdown, use standard syntax. For diagra
   return response.text;
 }
 
-export const getChatResponse = async (
-    history: Content[],
-    latestMessage: string,
-    currentDraft?: string | null,
-): Promise<{ text: string; sources: GroundingSource[] }> => {
-    let systemInstruction;
-    let userMessage = latestMessage;
+export async function rewriteText({
+    textToRewrite,
+    prompt,
+}: {
+    textToRewrite: string;
+    prompt: string;
+}): Promise<string> {
+    const model = 'gemini-2.5-flash';
+    const fullPrompt = `You are an expert technical writer. Rewrite the following text based on the user's instructions.
+Only return the rewritten text, without any preamble, explanation, or markdown formatting.
 
-    if (currentDraft) {
-        systemInstruction = `You are an AI assistant helping a user edit a technical document.
-If the user's request seems like an edit instruction (e.g., "change the title", "add a step", "rephrase this part"), you MUST respond with the full, updated document content inside a single \`\`\`markdown code block. You can add a short confirmation message before the code block, like "Of course, here is the updated version:".
-If the request is clearly a question and not an edit, provide a conversational answer.`;
-        userMessage = `${latestMessage}\n\n(For context, here is the current document draft:\n---\n${currentDraft}\n---)`;
-    } else {
-        systemInstruction = `You are a helpful AI assistant called ScreenGuide AI. You can answer questions related to the user's video and documentation. When relevant, use search to find up-to-date information.`;
+---
+Instructions from user:
+${prompt}
+
+---
+Text to rewrite:
+${textToRewrite}
+---
+`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: [{ parts: [{ text: fullPrompt }] }],
+        });
+        return response.text.trim();
+    } catch (e) {
+        console.error('Error rewriting text:', e);
+        throw new Error('Failed to rewrite text.');
     }
-
-    const contents = [...history, {role: 'user', parts: [{text: userMessage}]}];
-
-    const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
-        contents,
-        config: {
-            systemInstruction,
-            tools: [{googleSearch: {}}],
-        }
-    });
-    
-    let text = '';
-    const candidate = response.candidates?.[0];
-
-    // Manually extract text from response parts for robustness.
-    // The `response.text` getter can sometimes fail to extract text correctly
-    // from complex responses, such as those including grounding information.
-    if (candidate?.content?.parts) {
-        text = candidate.content.parts.map(part => part.text ?? '').join('');
-    }
-    
-    const groundingChunks = candidate?.groundingMetadata?.groundingChunks ?? [];
-    
-    const sources: GroundingSource[] = groundingChunks
-        .filter(chunk => chunk.web)
-        .map(chunk => ({
-            uri: chunk.web.uri,
-            title: chunk.web.title,
-        }));
-
-    return { text, sources };
 }
+
 
 export {transcribeVideo, generateGuide, generateTimecodedCaptions};

@@ -6,7 +6,7 @@
 // Copyright 2024 Google LLC
 
 // Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
+// you not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 
 //     https://www.apache.org/licenses/LICENSE-2.0
@@ -26,12 +26,12 @@ import MarkdownPreview from '@uiw/react-markdown-preview';
 import rehypeMermaid from 'rehype-mermaid';
 
 import {timeToSecs} from './utils';
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, getChatResponse, DiarizedSegment, Caption, GroundingSource} from './api';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, DiarizedSegment, Caption} from './api';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './exportUtils';
 import VideoPlayer from './VideoPlayer.jsx';
 import TranscriptEditor from './TranscriptEditor';
 import ContextModal from './ContextModal';
-import Chatbot from './Chatbot';
+import RewriteModal from './RewriteModal';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -197,10 +197,13 @@ export default function App() {
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-  // Chatbot state
-  const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string, sources?: GroundingSource[]}[]>([]);
-  const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
-  const [isBotReplying, setIsBotReplying] = useState(false);
+  // Rewrite state
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [selectionRange, setSelectionRange] = useState<{ start: number, end: number } | null>(null);
+  const [isRewriteModalOpen, setIsRewriteModalOpen] = useState(false);
+  const [rewritePrompt, setRewritePrompt] = useState('');
+  const [isRewriting, setIsRewriting] = useState(false);
+
 
   useEffect(() => {
     mermaid.initialize({
@@ -234,8 +237,6 @@ export default function App() {
     setLoadingMessage('');
     setProgress(0);
     setPendingFile(null);
-    setChatMessages([]);
-    setSelectedContext([]);
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -328,7 +329,6 @@ export default function App() {
 
     try {
       const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
-      const contextString = selectedContext.map(c => c.text).join('\n\n');
       const generationPromise = generateGuide({
         videoBase64,
         mimeType: videoMimeType,
@@ -336,7 +336,6 @@ export default function App() {
         description: videoDescription,
         prompt: userPrompt,
         format: outputFormat,
-        context: contextString,
       });
       const content = await simulateProgress(generationPromise, setProgress);
       setGeneratedContent(content);
@@ -513,7 +512,6 @@ export default function App() {
                   format: outputFormat,
                   content: generatedContent,
               },
-              chatHistory: chatMessages,
               timestamp: new Date().toISOString(),
           };
           zip.file("session.json", JSON.stringify(sessionData, null, 2));
@@ -593,59 +591,48 @@ export default function App() {
           setIsZipping(false);
       }
   };
-
-  const handleAddContext = (message: {id: number, text: string}) => {
-      if (!selectedContext.some(ctx => ctx.id === message.id)) {
-          setSelectedContext(prev => [...prev, {id: message.id, text: message.text}]);
-      }
-  };
   
-  const handleRemoveContext = (messageId: number) => {
-      setSelectedContext(prev => prev.filter(ctx => ctx.id !== messageId));
+  const handleSelectionChange = () => {
+    if (editorRef.current) {
+        const { selectionStart, selectionEnd } = editorRef.current;
+        if (selectionStart !== selectionEnd) {
+            setSelectionRange({ start: selectionStart, end: selectionEnd });
+        } else {
+            setSelectionRange(null);
+        }
+    }
   };
 
-  const handleSendMessage = async (message: string) => {
-      setIsBotReplying(true);
-      const newUserMessage = { id: Date.now(), sender: 'user' as const, text: message };
-      const newMessages = [...chatMessages, newUserMessage];
-      setChatMessages(newMessages);
-
-      const history = newMessages.slice(0, -1).map(msg => ({
-          role: msg.sender === 'user' ? ('user' as const) : ('model' as const),
-          parts: [{ text: msg.text }],
-      }));
+  const handleRewrite = async () => {
+      if (!selectionRange || !rewritePrompt) return;
+      
+      setIsRewriting(true);
+      const selectedText = generatedContent.substring(selectionRange.start, selectionRange.end);
 
       try {
-          const { text: responseText, sources } = await getChatResponse(
-              history,
-              message,
-              generatedContent,
-          );
-          
-          const markdownBlockRegex = /```markdown\n([\s\S]*?)\n```/;
-          const match = responseText.match(markdownBlockRegex);
+          const rewrittenText = await rewriteText({
+              textToRewrite: selectedText,
+              prompt: rewritePrompt,
+          });
 
-          let botResponseText = responseText;
-          if (match && match[1]) {
-              const updatedDraft = match[1];
-              setGeneratedContent(updatedDraft);
-              botResponseText = responseText.replace(markdownBlockRegex, '').trim() || "I've updated the draft for you.";
-          }
+          const newContent = 
+              generatedContent.substring(0, selectionRange.start) +
+              rewrittenText +
+              generatedContent.substring(selectionRange.end);
 
-          const newBotMessage = {
-              id: Date.now() + 1,
-              sender: 'bot' as const,
-              text: botResponseText,
-              sources: sources && sources.length > 0 ? sources : undefined,
-          };
-          setChatMessages(prev => [...prev, newBotMessage]);
+          setGeneratedContent(newContent);
 
-      } catch(e) {
+      } catch (e) {
           console.error(e);
-          const errorBotMessage = { id: Date.now() + 1, sender: 'bot' as const, text: "Sorry, I encountered an error. Please try again." };
-          setChatMessages(prev => [...prev, errorBotMessage]);
+          setError('Failed to rewrite text. Please try again.');
       } finally {
-          setIsBotReplying(false);
+          setIsRewriting(false);
+          setIsRewriteModalOpen(false);
+          setRewritePrompt('');
+          setSelectionRange(null);
+          if (editorRef.current) {
+              editorRef.current.blur(); // Deselect text
+          }
       }
   };
 
@@ -779,6 +766,12 @@ export default function App() {
                     <h2>Editor</h2>
                     {generatedContent && !isLoading && (
                     <div className="output-actions">
+                        <button 
+                            onClick={() => setIsRewriteModalOpen(true)} 
+                            disabled={!selectionRange || isRewriting}
+                        >
+                            <span className="icon">auto_fix_high</span> Edit with AI
+                        </button>
                         <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
                         <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
                         {outputFormat !== 'diagram' && (
@@ -812,29 +805,15 @@ export default function App() {
                     )}
                     {!isLoading && generatedContent && (
                         <textarea
+                            ref={editorRef}
                             value={generatedContent}
                             onChange={(e) => setGeneratedContent(e.target.value)}
+                            onSelect={handleSelectionChange}
+                            onBlur={() => setSelectionRange(null)}
                             className="editor-textarea-full"
                             aria-label="Markdown content editor"
                         />
                     )}
-                </div>
-            </section>
-            {/* ASSISTANT PANEL */}
-            <section className="panel assistant-panel">
-                <div className="panel-header">
-                    <h2>AI Assistant</h2>
-                </div>
-                <div className="panel-content">
-                <Chatbot
-                    messages={chatMessages}
-                    selectedContext={selectedContext}
-                    isBotReplying={isBotReplying}
-                    generatedContentExists={!!generatedContent}
-                    onSendMessage={handleSendMessage}
-                    onAddContext={handleAddContext}
-                    onRemoveContext={handleRemoveContext}
-                />
                 </div>
             </section>
         </div>
@@ -891,6 +870,15 @@ export default function App() {
         setDescription={setVideoDescription}
         prompt={userPrompt}
         setPrompt={setUserPrompt}
+      />
+      <RewriteModal
+        isOpen={isRewriteModalOpen}
+        onClose={() => setIsRewriteModalOpen(false)}
+        onSubmit={handleRewrite}
+        selectedText={selectionRange ? generatedContent.substring(selectionRange.start, selectionRange.end) : ''}
+        prompt={rewritePrompt}
+        setPrompt={setRewritePrompt}
+        isRewriting={isRewriting}
       />
     </main>
   );
