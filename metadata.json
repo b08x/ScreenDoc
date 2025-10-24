@@ -1,0 +1,9 @@
+{
+  "name": "ScreenGuide AI",
+  "description": "An intelligent web application designed to automate the creation of technical documentation by transforming screen recordings into well-structured, easy-to-follow written content.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "display-capture"
+  ]
+}
