@@ -455,22 +455,70 @@ video {
     100% { transform: rotate(360deg); }
 }
 
-.markdown-content {
+/* Markdown Preview Styles */
+.wm-markdown-preview {
+    background-color: transparent;
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
     line-height: 1.7;
 }
-.markdown-content h1,
-.markdown-content h2,
-.markdown-content h3 {
+
+.wm-markdown-preview h1,
+.wm-markdown-preview h2,
+.wm-markdown-preview h3,
+.wm-markdown-preview h4,
+.wm-markdown-preview h5,
+.wm-markdown-preview h6 {
+    color: var(--text);
+    border-bottom: 1px solid var(--border);
     margin-top: 1.5em;
     margin-bottom: 0.5em;
     line-height: 1.3;
 }
-.markdown-content ul,
-.markdown-content ol {
+
+.wm-markdown-preview ul,
+.wm-markdown-preview ol {
     padding-left: 2em;
     margin-bottom: 1em;
 }
-.markdown-content .image-placeholder {
+
+.wm-markdown-preview code {
+    background-color: var(--background-secondary);
+    color: var(--text);
+    font-family: 'Space Mono', monospace;
+    border-radius: 4px;
+    padding: 2px 4px;
+}
+.wm-markdown-preview pre {
+    background-color: var(--background-secondary);
+    padding: 1rem;
+    border-radius: 8px;
+}
+.wm-markdown-preview pre code {
+    padding: 0;
+    background: transparent;
+}
+
+.wm-markdown-preview blockquote {
+    border-left: .25em solid var(--border);
+    color: var(--text-light);
+    background-color: transparent;
+    padding-left: 1em;
+    margin-left: 0;
+}
+.wm-markdown-preview a {
+    color: var(--primary);
+}
+.wm-markdown-preview table th,
+.wm-markdown-preview table td {
+  border: 1px solid var(--border);
+  padding: 0.5rem;
+}
+.wm-markdown-preview table th {
+  background-color: var(--background-secondary);
+}
+
+.image-placeholder {
     border: 1px dashed var(--border);
     background: var(--background-secondary);
     padding: 1rem;
@@ -480,16 +528,11 @@ video {
     color: var(--text-light);
 }
 
-.mermaid-content {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    height: 100%;
-    width: 100%;
-}
-.mermaid-content svg {
+.editor-preview svg.mermaid {
     max-width: 100%;
     height: auto;
+    display: block;
+    margin: 0 auto;
 }
 
 /* NEW LAYOUT STYLES */
@@ -800,11 +843,11 @@ video {
       height: auto;
       display: block;
   }
-  .markdown-content .slide {
+  .wm-markdown-preview .slide {
     page-break-after: always; /* Each slide on a new page */
     border: 1px solid #ccc !important; /* Make border visible on print */
   }
-  .mermaid-content svg {
+  .editor-preview svg.mermaid {
     max-width: 100%;
     width: 100%;
     height: auto;

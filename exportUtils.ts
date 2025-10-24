@@ -17,18 +17,39 @@
 // limitations under the License.
 import { DiarizedSegment, Caption } from './api';
 
-// Helper to convert HH:MM:SS.ms to ASS format H:MM:SS.ss
+// Helper to convert timecodes (e.g., HH:MM:SS.ms) to ASS format H:MM:SS.ss
 const toAssTime = (time: string): string => {
     if (!time) return '0:00:00.00';
     const parts = time.split(':');
-    const hh = parts[0];
-    const mm = parts[1];
-    const ssms = parts[2].split('.');
-    const ss = ssms[0] || '00';
-    const ms = ssms[1] || '000';
-    const cs = Math.round(parseInt(ms, 10) / 10).toString().padStart(2, '0');
+    let hh = '0';
+    let mm = '00';
+    let ss = '00';
+    let ms = '000';
+    
+    if (parts.length === 3) { // HH:MM:SS.ms format
+        hh = parts[0];
+        mm = parts[1];
+        const ssms = parts[2].split('.');
+        ss = ssms[0] || '00';
+        ms = ssms[1] || '000';
+    } else if (parts.length === 2) { // MM:SS.ms format
+        mm = parts[0];
+        const ssms = parts[1].split('.');
+        ss = ssms[0] || '00';
+        ms = ssms[1] || '000';
+    } else if (parts.length === 1) { // SS.ms format
+        const ssms = parts[0].split('.');
+        ss = ssms[0] || '00';
+        ms = ssms[1] || '000';
+    }
+
+    // Normalize milliseconds to 3 digits and convert to centiseconds for ASS format
+    const paddedMs = ms.padEnd(3, '0').substring(0, 3);
+    const cs = Math.round(parseInt(paddedMs, 10) / 10).toString().padStart(2, '0');
+    
     return `${parseInt(hh, 10)}:${mm.padStart(2, '0')}:${ss.padStart(2, '0')}.${cs}`;
 };
+
 
 export const exportToAss = (transcript: DiarizedSegment[], captions: Caption[]) => {
     // generate styles for speakers

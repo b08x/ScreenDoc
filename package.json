@@ -18,7 +18,9 @@
     "@google/generative-ai": "^0.24.0",
     "d3-scale": "^4.0.2",
     "mermaid": "^10.9.0",
-    "jszip": "3.10.1"
+    "jszip": "3.10.1",
+    "@uiw/react-markdown-preview": "5.1.1",
+    "rehype-mermaid": "2.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

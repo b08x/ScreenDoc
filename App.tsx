@@ -19,8 +19,12 @@
 
 import c from 'classnames';
 // FIX: Import the 'React' namespace to resolve the 'Cannot find namespace React' error for types like React.DragEvent.
-import React, {useRef, useState} from 'react';
+import React, {useRef, useState, useEffect} from 'react';
 import JSZip from 'jszip';
+import mermaid from 'mermaid';
+import MarkdownPreview from '@uiw/react-markdown-preview';
+import rehypeMermaid from 'rehype-mermaid';
+
 import {timeToSecs} from './utils';
 import {transcribeVideo, generateGuide, generateTimecodedCaptions, getChatResponse, DiarizedSegment, Caption, GroundingSource} from './api';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './exportUtils';
@@ -28,8 +32,6 @@ import VideoPlayer from './VideoPlayer.jsx';
 import TranscriptEditor from './TranscriptEditor';
 import ContextModal from './ContextModal';
 import Chatbot from './Chatbot';
-import MermaidRenderer from './MermaidRenderer';
-import StyledMarkdown from './StyledMarkdown';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -128,39 +130,35 @@ const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
       if (ctx) {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         canvas.toBlob((blob) => {
+          document.body.removeChild(video);
           if (blob) {
             resolve(blob);
           } else {
             reject(new Error('Canvas to Blob conversion failed.'));
           }
-          document.body.removeChild(video);
         }, 'image/png');
       } else {
-        reject(new Error('Could not get canvas context.'));
         document.body.removeChild(video);
+        reject(new Error('Could not get canvas context.'));
       }
     };
 
     const onLoadedMetadata = () => {
       video.removeEventListener('loadedmetadata', onLoadedMetadata);
-      if (time > video.duration) {
-          console.warn(`Seek time ${time} is beyond video duration ${video.duration}. Clamping to duration.`);
-          video.currentTime = video.duration;
-      } else {
-          video.currentTime = time;
-      }
+      // Clamp time to be within video duration
+      video.currentTime = Math.max(0, Math.min(time, video.duration));
     };
 
     video.addEventListener('loadedmetadata', onLoadedMetadata);
     video.addEventListener('seeked', onSeeked);
     video.addEventListener('error', (e) => {
-        reject(new Error(`Video loading error`));
         document.body.removeChild(video);
+        reject(new Error(`Video loading error: ${video.error?.message || 'unknown error'}`));
     });
 
     video.src = videoUrl;
     document.body.appendChild(video);
-    video.load();
+    // video.load() is not needed and can cause issues; setting src is enough.
   });
 };
 
@@ -203,6 +201,13 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string, sources?: GroundingSource[]}[]>([]);
   const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
   const [isBotReplying, setIsBotReplying] = useState(false);
+
+  useEffect(() => {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme === 'dark' ? 'dark' : 'default',
+    });
+  }, [theme]);
 
   const makeProgressUpdater = (startPercent: number, endPercent: number) => {
     return (taskProgress: number) => { // taskProgress is 0-100
@@ -655,6 +660,14 @@ export default function App() {
   
   const isLoading = isProcessingVideo || isGenerating;
 
+  const processContentForPreview = (content: string) => {
+    if (!content) return '';
+    return content.replace(
+        /\[Image: (.*?)(?:\s+at\s+[0-9:.]+)?\]/gim,
+        '<div class="image-placeholder">🖼️ $1</div>'
+    );
+  };
+
   return (
     <main
       className={theme}
@@ -840,13 +853,28 @@ export default function App() {
                         <p>Preview will appear here.</p>
                     </div>
                 )}
-                {generatedContent && (
-                    // FIX: Replaced `format` with the `outputFormat` state variable to resolve a 'Cannot find name' error and correctly render the preview based on the selected output format.
-                    outputFormat === 'diagram' ? (
-                        <MermaidRenderer content={generatedContent} theme={theme} />
-                    ) : (
-                        <StyledMarkdown content={generatedContent} />
-                    )
+                {generatedContent && outputFormat === 'slides' && (
+                    generatedContent.split(/\n---\n/).map((slideContent, index) => (
+                        <div className="slide" key={index}>
+                            <div className="slide-number">{index + 1}</div>
+                            <div className="slide-content">
+                                <MarkdownPreview
+                                    source={processContentForPreview(slideContent.trim())}
+                                    rehypePlugins={[[rehypeMermaid]]}
+                                    wrapperElement={{ "data-color-mode": theme }}
+                                    allowDangerousHtml={true}
+                                />
+                            </div>
+                        </div>
+                    ))
+                )}
+                {generatedContent && outputFormat !== 'slides' && (
+                    <MarkdownPreview
+                        source={processContentForPreview(outputFormat === 'diagram' ? '```mermaid\n' + generatedContent + '\n```' : generatedContent)}
+                        rehypePlugins={[[rehypeMermaid]]}
+                        wrapperElement={{ "data-color-mode": theme }}
+                        allowDangerousHtml={true}
+                    />
                 )}
             </div>
         </section>
