@@ -115,56 +115,6 @@ const simulateShortProgress = (onProgress: (percent: number) => void): Promise<v
     });
 };
 
-// Helper function to extract a frame from a video at a specific time
-const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.style.display = 'none';
-    video.muted = true;
-    video.crossOrigin = 'anonymous';
-
-    const onSeeked = () => {
-      video.removeEventListener('seeked', onSeeked);
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          document.body.removeChild(video);
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('Canvas to Blob conversion failed.'));
-          }
-        }, 'image/png');
-      } else {
-        document.body.removeChild(video);
-        reject(new Error('Could not get canvas context.'));
-      }
-    };
-
-    const onLoadedMetadata = () => {
-      video.removeEventListener('loadedmetadata', onLoadedMetadata);
-      // Clamp time to be within video duration
-      video.currentTime = Math.max(0, Math.min(time, video.duration));
-    };
-
-    video.addEventListener('loadedmetadata', onLoadedMetadata);
-    video.addEventListener('seeked', onSeeked);
-    video.addEventListener('error', (e) => {
-        document.body.removeChild(video);
-        reject(new Error(`Video loading error: ${video.error?.message || 'unknown error'}`));
-    });
-
-    video.src = videoUrl;
-    document.body.appendChild(video);
-    // video.load() is not needed and can cause issues; setting src is enough.
-  });
-};
-
-
 export default function App() {
   const [theme] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -478,38 +428,72 @@ export default function App() {
               const imagesFolder = zip.folder("images");
               if (!imagesFolder) throw new Error("Could not create images folder in zip.");
   
-              const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
-                  const placeholder = match[0];
-                  const description = match[1];
-                  const timecode = match[2];
-                  
-                  if (timecode) {
-                      try {
-                          const seconds = timeToSecs(timecode);
-                          const blob = await extractFrame(videoUrl, seconds);
-                          if (blob) {
-                              const imageName = `image-${index + 1}.png`;
-                              imagesFolder.file(imageName, blob);
-                              const replacementText = `![${description}](./images/${imageName})`;
-                              return { placeholder, replacementText };
+              const replacements = [];
+              const video = document.createElement('video');
+              video.style.display = 'none'; // Keep it hidden
+              document.body.appendChild(video); // Append to DOM for reliable processing
+  
+              try {
+                  video.muted = true;
+                  video.crossOrigin = 'anonymous';
+                  video.src = videoUrl;
+  
+                  await new Promise<void>((resolve, reject) => {
+                      video.addEventListener('loadedmetadata', () => resolve(), { once: true });
+                      video.addEventListener('error', (err) => reject(new Error('Video load error for export.')), { once: true });
+                  });
+  
+                  for (const [index, match] of imagePlaceholders.entries()) {
+                      const placeholder = match[0];
+                      const description = match[1];
+                      const timecode = match[2];
+                      
+                      if (timecode) {
+                          try {
+                              const seconds = timeToSecs(timecode);
+                              const blob = await new Promise<Blob>((resolve, reject) => {
+                                  const onSeeked = () => {
+                                      const canvas = document.createElement('canvas');
+                                      canvas.width = video.videoWidth;
+                                      canvas.height = video.videoHeight;
+                                      const ctx = canvas.getContext('2d');
+                                      if (!ctx) return reject(new Error('Canvas context failed.'));
+                                      
+                                      // Use requestAnimationFrame to ensure the frame has been painted
+                                      requestAnimationFrame(() => {
+                                        try {
+                                          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                          canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas to blob failed.')), 'image/png');
+                                        } catch (drawError) {
+                                          reject(drawError);
+                                        }
+                                      });
+                                  };
+                                  video.addEventListener('seeked', onSeeked, { once: true });
+                                  video.currentTime = Math.max(0, Math.min(seconds, video.duration));
+                              });
+                              
+                              if (blob) {
+                                  const imageName = `image-${index + 1}.png`;
+                                  imagesFolder.file(imageName, blob);
+                                  const replacementText = `![${description}](./images/${imageName})`;
+                                  replacements.push({ placeholder, replacementText });
+                              }
+                          } catch (e) {
+                              console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                           }
-                      } catch (e) {
-                          console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                       }
                   }
-                  return null; // Return null if extraction fails or no timecode
-              }));
-
-              const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
   
-              // Sequentially replace placeholders to handle duplicates correctly
-              for (const rep of validReplacements) {
-                  updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
+                  for (const rep of replacements) {
+                      updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
+                  }
+              } finally {
+                  document.body.removeChild(video); // Clean up the video element
               }
           }
   
           zip.file('guide.md', updatedContent);
-  
           const zipBlob = await zip.generateAsync({type: 'blob'});
           downloadFile('ScreenGuide-Export.zip', zipBlob, 'application/zip');
   
@@ -584,32 +568,67 @@ export default function App() {
                       const imagesFolder = zip.folder("images");
                       if (!imagesFolder) throw new Error("Could not create images folder.");
                       
-                      const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
-                          const placeholder = match[0];
-                          const description = match[1];
-                          const timecode = match[2];
-                          
-                          if (timecode) {
-                            try {
-                                const seconds = timeToSecs(timecode);
-                                const blob = await extractFrame(videoUrl, seconds);
-                                if (blob) {
-                                    const imageName = `image-${index + 1}.png`;
-                                    imagesFolder.file(imageName, blob);
-                                    const replacementText = `![${description}](../images/${imageName})`;
-                                    return { placeholder, replacementText };
-                                }
-                            } catch (e) {
-                                console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
-                            }
-                          }
-                          return null;
-                      }));
+                      const replacements = [];
+                      const video = document.createElement('video');
+                      video.style.display = 'none';
+                      document.body.appendChild(video);
 
-                      const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
-                      
-                      for (const rep of validReplacements) {
-                          finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
+                      try {
+                          video.muted = true;
+                          video.crossOrigin = 'anonymous';
+                          video.src = videoUrl;
+    
+                          await new Promise<void>((resolve, reject) => {
+                              video.addEventListener('loadedmetadata', () => resolve(), { once: true });
+                              video.addEventListener('error', () => reject(new Error('Video load error for export.')), { once: true });
+                          });
+    
+                          for (const [index, match] of imagePlaceholders.entries()) {
+                              const placeholder = match[0];
+                              const description = match[1];
+                              const timecode = match[2];
+                              
+                              if (timecode) {
+                                try {
+                                    const seconds = timeToSecs(timecode);
+                                    const blob = await new Promise<Blob>((resolve, reject) => {
+                                        const onSeeked = () => {
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = video.videoWidth;
+                                            canvas.height = video.videoHeight;
+                                            const ctx = canvas.getContext('2d');
+                                            if (!ctx) return reject(new Error('Canvas context failed.'));
+
+                                            requestAnimationFrame(() => {
+                                              try {
+                                                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                                                canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas to blob failed.')));
+                                              } catch (drawError) {
+                                                reject(drawError);
+                                              }
+                                            });
+                                        };
+                                        video.addEventListener('seeked', onSeeked, { once: true });
+                                        video.currentTime = Math.max(0, Math.min(seconds, video.duration));
+                                    });
+                                    
+                                    if (blob) {
+                                        const imageName = `image-${index + 1}.png`;
+                                        imagesFolder.file(imageName, blob);
+                                        const replacementText = `![${description}](../images/${imageName})`;
+                                        replacements.push({ placeholder, replacementText });
+                                    }
+                                } catch (e) {
+                                    console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+                                }
+                              }
+                          }
+                          
+                          for (const rep of replacements) {
+                              finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
+                          }
+                      } finally {
+                          document.body.removeChild(video);
                       }
                   }
               }
@@ -867,7 +886,6 @@ export default function App() {
                             value={generatedContent}
                             onChange={(e) => setGeneratedContent(e.target.value)}
                             onSelect={handleSelectionChange}
-                            onBlur={() => setSelectionRange(null)}
                             className="editor-textarea-full"
                             aria-label="Markdown content editor"
                         />
