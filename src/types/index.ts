@@ -28,8 +28,3 @@ export interface DiarizedSegment {
   endTime: string;
   text: string;
 }
-
-export interface GroundingSource {
-    uri: string;
-    title: string;
-}

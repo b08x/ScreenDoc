@@ -26,13 +26,14 @@ import MarkdownPreview from '@uiw/react-markdown-preview';
 import rehypeMermaid from 'rehype-mermaid';
 
 import {timeToSecs} from './utils/utils';
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, getChatResponse} from './utils/api';
-import {DiarizedSegment, Caption, GroundingSource} from './types';
+// FIX: Import the `rewriteText` function to resolve the 'Cannot find name' error.
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText} from './utils/api';
+import {DiarizedSegment, Caption} from './types';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './utils/exportUtils';
 import VideoPlayer from './components/VideoPlayer';
 import TranscriptEditor from './components/TranscriptEditor';
 import ContextModal from './components/ContextModal';
-import Chatbot from './components/Chatbot';
+import RewriteModal from './components/RewriteModal';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -198,10 +199,17 @@ export default function App() {
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
 
-  // Chatbot state
-  const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string, sources?: GroundingSource[]}[]>([]);
-  const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
-  const [isBotReplying, setIsBotReplying] = useState(false);
+  // Retry state
+  const [captioningFailed, setCaptioningFailed] = useState(false);
+  const [isRetryingCaptions, setIsRetryingCaptions] = useState(false);
+  
+  // Rewrite state
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const [selectionRange, setSelectionRange] = useState<{ start: number, end: number } | null>(null);
+  const [isRewriteModalOpen, setIsRewriteModalOpen] = useState(false);
+  const [rewritePrompt, setRewritePrompt] = useState('');
+  const [isRewriting, setIsRewriting] = useState(false);
+
 
   useEffect(() => {
     mermaid.initialize({
@@ -235,8 +243,8 @@ export default function App() {
     setLoadingMessage('');
     setProgress(0);
     setPendingFile(null);
-    setChatMessages([]);
-    setSelectedContext([]);
+    setCaptioningFailed(false);
+    setIsRetryingCaptions(false);
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -263,6 +271,7 @@ export default function App() {
     setVideoUrl(URL.createObjectURL(pendingFile));
     setIsProcessingVideo(true);
     setError('');
+    setCaptioningFailed(false);
 
     try {
       setLoadingMessage('Reading video file (1/4)...');
@@ -301,6 +310,7 @@ export default function App() {
       } else {
         setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
         setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+        setCaptioningFailed(true);
       }
 
     } catch (e) {
@@ -314,6 +324,44 @@ export default function App() {
     }
   };
 
+  const handleRetryCaptions = async () => {
+      if (!videoBase64 || !videoMimeType) return;
+      
+      setIsRetryingCaptions(true);
+      setError(prev => (prev || '').replace('Captioning failed; providing an empty editor.', '').replace('\n\n', '\n').trim());
+      setCaptioningFailed(false);
+      setProgress(0);
+      
+      try {
+          const captionsPromise = generateTimecodedCaptions({
+              videoBase64,
+              mimeType: videoMimeType,
+              description: videoDescription,
+              userPrompt: userPrompt,
+          });
+          
+          const captions = await simulateProgress(captionsPromise, setProgress);
+
+          if (captions?.length > 0) {
+              setTimecodedCaptions(captions);
+          } else {
+              setError(prev => {
+                const newError = 'Captioning failed; providing an empty editor.';
+                if (!prev || prev.trim() === '') return newError;
+                if (prev.includes(newError)) return prev;
+                return `${prev}\n${newError}`;
+              });
+              setCaptioningFailed(true);
+          }
+      } catch (e) {
+          console.error("Caption retry error:", e);
+          setError(prev => (prev || '') + '\nFailed to retry caption generation.');
+          setCaptioningFailed(true);
+      } finally {
+          setIsRetryingCaptions(false);
+          setProgress(0);
+      }
+  };
 
   const handleGenerate = async () => {
     if (!videoBase64 || diarizedTranscript.length === 0) {
@@ -329,7 +377,6 @@ export default function App() {
 
     try {
       const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
-      const contextString = selectedContext.map(c => c.text).join('\n\n');
       const generationPromise = generateGuide({
         videoBase64,
         mimeType: videoMimeType,
@@ -337,7 +384,6 @@ export default function App() {
         description: videoDescription,
         prompt: userPrompt,
         format: outputFormat,
-        context: contextString,
       });
       const content = await simulateProgress(generationPromise, setProgress);
       setGeneratedContent(content);
@@ -432,9 +478,7 @@ export default function App() {
               const imagesFolder = zip.folder("images");
               if (!imagesFolder) throw new Error("Could not create images folder in zip.");
   
-              const replacements = [];
-              // Sequentially process each placeholder to avoid issues with parallel DOM manipulation.
-              for (const [index, match] of imagePlaceholders.entries()) {
+              const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
                   const placeholder = match[0];
                   const description = match[1];
                   const timecode = match[2];
@@ -447,17 +491,19 @@ export default function App() {
                               const imageName = `image-${index + 1}.png`;
                               imagesFolder.file(imageName, blob);
                               const replacementText = `![${description}](./images/${imageName})`;
-                              replacements.push({ placeholder, replacementText });
+                              return { placeholder, replacementText };
                           }
                       } catch (e) {
                           console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                       }
                   }
-              }
+                  return null; // Return null if extraction fails or no timecode
+              }));
+
+              const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
   
-              // Apply replacements sequentially. Using a loop with .replace ensures
-              // that even if placeholders are identical, they are replaced one by one.
-              for (const rep of replacements) {
+              // Sequentially replace placeholders to handle duplicates correctly
+              for (const rep of validReplacements) {
                   updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
               }
           }
@@ -514,7 +560,6 @@ export default function App() {
                   format: outputFormat,
                   content: generatedContent,
               },
-              chatHistory: chatMessages,
               timestamp: new Date().toISOString(),
           };
           zip.file("session.json", JSON.stringify(sessionData, null, 2));
@@ -539,9 +584,7 @@ export default function App() {
                       const imagesFolder = zip.folder("images");
                       if (!imagesFolder) throw new Error("Could not create images folder.");
                       
-                      const replacements = [];
-                      // Sequentially process each placeholder to avoid issues with parallel DOM manipulation.
-                      for (const [index, match] of imagePlaceholders.entries()) {
+                      const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
                           const placeholder = match[0];
                           const description = match[1];
                           const timecode = match[2];
@@ -554,15 +597,18 @@ export default function App() {
                                     const imageName = `image-${index + 1}.png`;
                                     imagesFolder.file(imageName, blob);
                                     const replacementText = `![${description}](../images/${imageName})`;
-                                    replacements.push({ placeholder, replacementText });
+                                    return { placeholder, replacementText };
                                 }
                             } catch (e) {
                                 console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                             }
                           }
-                      }
+                          return null;
+                      }));
+
+                      const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
                       
-                      for (const rep of replacements) {
+                      for (const rep of validReplacements) {
                           finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
                       }
                   }
@@ -593,59 +639,48 @@ export default function App() {
           setIsZipping(false);
       }
   };
-
-  const handleAddContext = (message: {id: number, text: string}) => {
-      if (!selectedContext.some(ctx => ctx.id === message.id)) {
-          setSelectedContext(prev => [...prev, {id: message.id, text: message.text}]);
-      }
-  };
   
-  const handleRemoveContext = (messageId: number) => {
-      setSelectedContext(prev => prev.filter(ctx => ctx.id !== messageId));
+  const handleSelectionChange = () => {
+    if (editorRef.current) {
+        const { selectionStart, selectionEnd } = editorRef.current;
+        if (selectionStart !== selectionEnd) {
+            setSelectionRange({ start: selectionStart, end: selectionEnd });
+        } else {
+            setSelectionRange(null);
+        }
+    }
   };
 
-  const handleSendMessage = async (message: string) => {
-      setIsBotReplying(true);
-      const newUserMessage = { id: Date.now(), sender: 'user' as const, text: message };
-      const newMessages = [...chatMessages, newUserMessage];
-      setChatMessages(newMessages);
-
-      const history = newMessages.slice(0, -1).map(msg => ({
-          role: msg.sender === 'user' ? ('user' as const) : ('model' as const),
-          parts: [{ text: msg.text }],
-      }));
+  const handleRewrite = async () => {
+      if (!selectionRange || !rewritePrompt) return;
+      
+      setIsRewriting(true);
+      const selectedText = generatedContent.substring(selectionRange.start, selectionRange.end);
 
       try {
-          const { text: responseText, sources } = await getChatResponse(
-              history,
-              message,
-              generatedContent,
-          );
-          
-          const markdownBlockRegex = /```markdown\n([\s\S]*?)\n```/;
-          const match = responseText.match(markdownBlockRegex);
+          const rewrittenText = await rewriteText({
+              textToRewrite: selectedText,
+              prompt: rewritePrompt,
+          });
 
-          let botResponseText = responseText;
-          if (match && match[1]) {
-              const updatedDraft = match[1];
-              setGeneratedContent(updatedDraft);
-              botResponseText = responseText.replace(markdownBlockRegex, '').trim() || "I've updated the draft for you.";
-          }
+          const newContent = 
+              generatedContent.substring(0, selectionRange.start) +
+              rewrittenText +
+              generatedContent.substring(selectionRange.end);
 
-          const newBotMessage = {
-              id: Date.now() + 1,
-              sender: 'bot' as const,
-              text: botResponseText,
-              sources: sources && sources.length > 0 ? sources : undefined,
-          };
-          setChatMessages(prev => [...prev, newBotMessage]);
+          setGeneratedContent(newContent);
 
-      } catch(e) {
+      } catch (e) {
           console.error(e);
-          const errorBotMessage = { id: Date.now() + 1, sender: 'bot' as const, text: "Sorry, I encountered an error. Please try again." };
-          setChatMessages(prev => [...prev, errorBotMessage]);
+          setError('Failed to rewrite text. Please try again.');
       } finally {
-          setIsBotReplying(false);
+          setIsRewriting(false);
+          setIsRewriteModalOpen(false);
+          setRewritePrompt('');
+          setSelectionRange(null);
+          if (editorRef.current) {
+              editorRef.current.blur(); // Deselect text
+          }
       }
   };
 
@@ -726,7 +761,17 @@ export default function App() {
             </div>
 
             {videoUrl && <VideoPlayer url={videoUrl} captions={timecodedCaptions}/>}
-            {error && <div className="error-message">{error}</div>}
+            {error && (
+              <div className="error-message">
+                <span>{error}</span>
+                {captioningFailed && (
+                    <button onClick={handleRetryCaptions} disabled={isRetryingCaptions} className="button retry-button">
+                        <span className="icon">refresh</span>
+                        {isRetryingCaptions ? `Retrying... (${Math.round(progress)}%)` : 'Retry Captions'}
+                    </button>
+                )}
+              </div>
+            )}
 
             {/* Step 2: Review Transcription */}
             <div className={c('step', {disabled: !videoBase64})}>
@@ -779,6 +824,12 @@ export default function App() {
                     <h2>Editor</h2>
                     {generatedContent && !isLoading && (
                     <div className="output-actions">
+                        <button 
+                            onClick={() => setIsRewriteModalOpen(true)} 
+                            disabled={!selectionRange || isRewriting}
+                        >
+                            <span className="icon">auto_fix_high</span> Edit with AI
+                        </button>
                         <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
                         <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
                         {outputFormat !== 'diagram' && (
@@ -812,29 +863,15 @@ export default function App() {
                     )}
                     {!isLoading && generatedContent && (
                         <textarea
+                            ref={editorRef}
                             value={generatedContent}
                             onChange={(e) => setGeneratedContent(e.target.value)}
+                            onSelect={handleSelectionChange}
+                            onBlur={() => setSelectionRange(null)}
                             className="editor-textarea-full"
                             aria-label="Markdown content editor"
                         />
                     )}
-                </div>
-            </section>
-            {/* ASSISTANT PANEL */}
-            <section className="panel assistant-panel">
-                <div className="panel-header">
-                    <h2>AI Assistant</h2>
-                </div>
-                <div className="panel-content">
-                <Chatbot
-                    messages={chatMessages}
-                    selectedContext={selectedContext}
-                    isBotReplying={isBotReplying}
-                    generatedContentExists={!!generatedContent}
-                    onSendMessage={handleSendMessage}
-                    onAddContext={handleAddContext}
-                    onRemoveContext={handleRemoveContext}
-                />
                 </div>
             </section>
         </div>
@@ -891,6 +928,15 @@ export default function App() {
         setDescription={setVideoDescription}
         prompt={userPrompt}
         setPrompt={setUserPrompt}
+      />
+      <RewriteModal
+        isOpen={isRewriteModalOpen}
+        onClose={() => setIsRewriteModalOpen(false)}
+        onSubmit={handleRewrite}
+        selectedText={selectionRange ? generatedContent.substring(selectionRange.start, selectionRange.end) : ''}
+        prompt={rewritePrompt}
+        setPrompt={setRewritePrompt}
+        isRewriting={isRewriting}
       />
     </main>
   );
