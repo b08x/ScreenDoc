@@ -503,3 +503,15 @@ video {
     text-align: center;
     color: var(--text-light);
 }
+
+.mermaid-content {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100%;
+    width: 100%;
+}
+.mermaid-content svg {
+    max-width: 100%;
+    height: auto;
+}

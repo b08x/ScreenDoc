@@ -16,7 +16,8 @@
     "d3-shape": "^3.2.0",
     "classnames": "^2.5.1",
     "@google/generative-ai": "^0.24.0",
-    "d3-scale": "^4.0.2"
+    "d3-scale": "^4.0.2",
+    "mermaid": "^10.9.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

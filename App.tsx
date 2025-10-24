@@ -19,6 +19,7 @@
 
 import c from 'classnames';
 import {useRef, useState, useEffect} from 'react';
+import mermaid from 'mermaid';
 import {transcribeVideo, generateGuide, generateTimecodedCaptions} from './api';
 import VideoPlayer from './VideoPlayer.jsx';
 
@@ -140,6 +141,39 @@ function MarkdownRenderer({content}: {content: string}) {
   );
 }
 
+function MermaidRenderer({ content, theme }: { content: string, theme: string }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [error, setError] = useState('');
+  
+  useEffect(() => {
+    mermaid.initialize({
+      startOnLoad: false,
+      theme: theme === 'dark' ? 'dark' : 'default',
+    });
+
+    if (content && containerRef.current) {
+      setError('');
+      containerRef.current.innerHTML = ''; // Clear previous render
+      try {
+        mermaid.render('mermaid-graph', content, (svgCode) => {
+          if (containerRef.current) {
+            containerRef.current.innerHTML = svgCode;
+          }
+        });
+      } catch (e) {
+        console.error("Mermaid rendering error:", e);
+        setError("Could not render the diagram. The generated syntax might be invalid.");
+      }
+    }
+  }, [content, theme]);
+
+  if (error) {
+    return <div className="error-message">{error}</div>
+  }
+
+  return <div ref={containerRef} className="mermaid-content"></div>;
+}
+
 export default function App() {
   const [theme] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -166,7 +200,8 @@ export default function App() {
   const [generatedContent, setGeneratedContent] = useState('');
 
   // Loading states
-  const [isLoading, setIsLoading] = useState(false);
+  const [isProcessingVideo, setIsProcessingVideo] = useState(false);
+  const [isGenerating, setIsGenerating] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [progress, setProgress] = useState(0);
 
@@ -182,7 +217,8 @@ export default function App() {
     setUserPrompt('');
     setOutputFormat('guide');
     setGeneratedContent('');
-    setIsLoading(false);
+    setIsProcessingVideo(false);
+    setIsGenerating(false);
     setLoadingMessage('');
     setProgress(0);
   };
@@ -202,7 +238,7 @@ export default function App() {
     resetState();
     setVideoFile(file);
     setVideoUrl(URL.createObjectURL(file));
-    setIsLoading(true);
+    setIsProcessingVideo(true);
     setError('');
 
     try {
@@ -227,7 +263,7 @@ export default function App() {
       console.error(e);
       setError('An error occurred during processing. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsProcessingVideo(false);
       setLoadingMessage('');
       setProgress(0);
     }
@@ -238,8 +274,9 @@ export default function App() {
       setError('Missing video or transcript.');
       return;
     }
-    setIsLoading(true);
-    setLoadingMessage('Generating guide...');
+    setIsGenerating(true);
+    const message = outputFormat === 'diagram' ? 'Generating diagram...' : 'Generating content...';
+    setLoadingMessage(message);
     setError('');
     setGeneratedContent('');
     setProgress(0);
@@ -257,9 +294,9 @@ export default function App() {
       setGeneratedContent(content);
     } catch (e) {
       console.error(e);
-      setError('Failed to generate guide. Please try again.');
+      setError('Failed to generate content. Please try again.');
     } finally {
-      setIsLoading(false);
+      setIsGenerating(false);
       setLoadingMessage('');
       setProgress(0);
     }
@@ -357,11 +394,13 @@ export default function App() {
   };
   
   const saveAsMarkdown = () => {
-    const blob = new Blob([generatedContent], { type: 'text/markdown;charset=utf-8' });
+    const fileExtension = outputFormat === 'diagram' ? 'mmd' : 'md';
+    const mimeType = outputFormat === 'diagram' ? 'text/plain' : 'text/markdown;charset=utf-8';
+    const blob = new Blob([generatedContent], { type: mimeType });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'ScreenGuide-Output.md';
+    a.download = `ScreenGuide-Output.${fileExtension}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -375,6 +414,8 @@ export default function App() {
       e.dataTransfer.clearData();
     }
   };
+  
+  const isLoading = isProcessingVideo || isGenerating;
 
   return (
     <main
@@ -497,13 +538,17 @@ export default function App() {
                   <input type="radio" name="format" value="article" checked={outputFormat === 'article'} onChange={() => setOutputFormat('article')} />
                   Knowledge Base Article
                 </label>
+                <label className={c({active: outputFormat === 'diagram'})}>
+                  <input type="radio" name="format" value="diagram" checked={outputFormat === 'diagram'} onChange={() => setOutputFormat('diagram')} />
+                  Diagram / Flowchart
+                </label>
               </div>
             </div>
 
              {/* Step 5: Generate */}
             <div className={c('step', {disabled: !videoBase64})}>
                 <button className="button generate-button" onClick={handleGenerate} disabled={!videoBase64 || isLoading}>
-                  ▶️ Generate Guide
+                  ▶️ Generate Content
                 </button>
             </div>
           </div>
@@ -516,12 +561,12 @@ export default function App() {
             {generatedContent && !isLoading && (
               <div className="output-actions">
                 <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
-                <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .md</button>
+                <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
               </div>
             )}
           </div>
           <div className="panel-content output-content">
-            {isLoading && (
+            {isProcessingVideo && (
               <div className="loading">
                 <div className="spinner"></div>
                 <p className="loading-message">{loadingMessage}</p>
@@ -531,12 +576,22 @@ export default function App() {
                 <p className="progress-percent">{Math.round(progress)}%</p>
               </div>
             )}
+            {isGenerating && (
+              <div className="loading">
+                <div className="spinner"></div>
+                <p className="loading-message">{loadingMessage}</p>
+              </div>
+            )}
             {!isLoading && !generatedContent && (
                 <div className="empty-output">
-                    <p>Your generated guide will appear here.</p>
+                    <p>Your generated content will appear here.</p>
                 </div>
             )}
-            {generatedContent && <MarkdownRenderer content={generatedContent} />}
+            {!isLoading && generatedContent && (
+              outputFormat === 'diagram' ?
+              <MermaidRenderer content={generatedContent} theme={theme} /> :
+              <MarkdownRenderer content={generatedContent} />
+            )}
           </div>
         </section>
       </div>

@@ -109,10 +109,21 @@ async function generateTimecodedCaptions({ videoBase64, mimeType }: { videoBase6
 
 async function generateGuide({videoBase64, mimeType, transcript, description, prompt, format}: { videoBase64: string; mimeType: string; transcript: string; description: string; prompt: string; format: string; }) {
   const model = 'gemini-2.5-pro';
-  const formatInstruction =
-    format === 'guide'
-      ? 'A step-by-step guide with numbered lists and placeholders for screenshots like [Image: description of the visual].'
-      : 'A knowledge base article with structured headings, subheadings, paragraphs, and bullet points.';
+  let formatInstruction: string;
+
+  switch (format) {
+    case 'guide':
+      formatInstruction = 'A step-by-step guide with numbered lists and placeholders for screenshots like [Image: description of the visual].';
+      break;
+    case 'article':
+      formatInstruction = 'A knowledge base article with structured headings, subheadings, paragraphs, and bullet points.';
+      break;
+    case 'diagram':
+      formatInstruction = "A flowchart diagram in Mermaid syntax (using 'graph TD' for a top-down chart) that visually represents the process shown in the video. The output should ONLY be the raw Mermaid code, without the markdown ```mermaid ... ``` wrapper.";
+      break;
+    default:
+      formatInstruction = 'A step-by-step guide.';
+  }
 
   const fullPrompt = `You are ScreenGuide AI, an expert technical writer. Your task is to create a guide based on a screen recording.
 You will be provided with the video, a transcription of the audio, a high-level description of the video's purpose, the desired output format, and specific instructions.
@@ -136,7 +147,7 @@ ${prompt || 'Not provided.'}
 
 ---
 
-Please generate the final content in Markdown format. Do not include this prompt in your response, only the final markdown document.`;
+Please generate the final content. For Markdown, use standard syntax. For diagrams, output ONLY the raw Mermaid code. Do not include this prompt in your response, only the final content.`;
 
   const response = await ai.models.generateContent({
     model: model,
