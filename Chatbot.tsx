@@ -19,10 +19,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 
 // Define message types
+interface GroundingSource {
+    uri: string;
+    title: string;
+}
 interface Message {
   id: number;
   sender: 'user' | 'bot';
   text: string;
+  sources?: GroundingSource[];
 }
 
 interface ContextMessage {
@@ -100,6 +105,20 @@ export default function Chatbot({
             <div key={msg.id} className={`chat-message ${msg.sender}`}>
               <div className="message-content">
                 <p>{msg.text}</p>
+                {msg.sources && msg.sources.length > 0 && (
+                    <div className="message-sources">
+                        <strong>Sources:</strong>
+                        <ol>
+                            {msg.sources.map((source, index) => (
+                                <li key={index}>
+                                    <a href={source.uri} target="_blank" rel="noopener noreferrer">
+                                        {source.title || source.uri}
+                                    </a>
+                                </li>
+                            ))}
+                        </ol>
+                    </div>
+                )}
                 {msg.sender === 'bot' && !isMessageInContext(msg.id) && (
                   <button className="add-context-btn" onClick={() => onAddContext(msg)}>
                      <span className="icon">add</span> Add to Context

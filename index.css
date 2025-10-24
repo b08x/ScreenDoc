@@ -44,13 +44,14 @@ h1, h2, h3, h4, h5, h6 {
 
 h2 {
   font-size: 1.1em;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1em;
 }
 
 h3 {
   font-size: 1em;
-  padding-bottom: 0.5em;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1em;
+  margin-bottom: 0.75rem;
 }
 
 input, textarea {
@@ -102,7 +103,7 @@ button:disabled {
   background-color: transparent;
 }
 
-button .icon, .button .icon, .tab-button .icon {
+button .icon, .button .icon {
   font-family: "Material Symbols Outlined";
   font-weight: 300;
   line-height: 1;
@@ -135,9 +136,13 @@ header p {
 
 .container {
   display: grid;
-  grid-template-columns: minmax(450px, 1.2fr) 1.8fr;
+  grid-template-columns: 1.2fr 1.2fr 1fr;
   flex: 1;
   overflow: hidden;
+  transition: grid-template-columns 0.3s ease-in-out;
+}
+.container.preview-collapsed {
+    grid-template-columns: 1fr 1fr 50px;
 }
 
 .panel {
@@ -145,6 +150,7 @@ header p {
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--border);
+  overflow: hidden;
 }
 .panel:last-child {
     border-right: none;
@@ -167,6 +173,7 @@ header p {
 .panel-content {
   overflow-y: auto;
   padding: 1.5rem;
+  height: 100%;
 }
 
 .step {
@@ -251,13 +258,6 @@ header p {
 .generate-button:hover {
     opacity: 0.9;
     background: var(--primary);
-}
-
-.output-assistant-panel .panel-content {
-    position: relative;
-}
-.output-assistant-panel.assistant-active .panel-content {
-    padding: 0;
 }
 
 .empty-output {
@@ -492,69 +492,60 @@ video {
     height: auto;
 }
 
-/* Tab Styles */
-.panel-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border);
-    padding: 0 1rem;
-    flex-shrink: 0;
-}
-.panel-tabs .tab-button {
-    border-radius: 0;
-    border: none;
-    border-bottom: 3px solid transparent;
-}
-
-/* Editor Styles */
-.markdown-editor {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-}
-
-.editor-tabs {
-    display: flex;
-    border-bottom: 1px solid var(--border);
-}
-
-.tab-button {
-    padding: 0.75rem 1rem;
-    border: none;
-    border-bottom: 3px solid transparent;
-    background: none;
-    cursor: pointer;
-    font-size: 0.9em;
-    color: var(--text-light);
-}
-
-.tab-button.active {
-    border-bottom-color: var(--primary);
-    color: var(--text);
-    font-weight: 700;
-}
-
-.tab-button:hover {
-    background-color: var(--background-secondary);
-}
-
-.editor-content {
-    flex-grow: 1;
-    position: relative;
+/* NEW LAYOUT STYLES */
+.middle-column {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
     overflow: hidden;
+    height: 100%;
+    border-right: 1px solid var(--border);
 }
 
-.editor-textarea {
+.editor-panel {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+}
+.editor-panel .panel-content {
+    padding: 0;
+    position: relative;
+}
+
+.editor-textarea-full {
     width: 100%;
     height: 100%;
-    position: absolute;
-    top: 0;
-    left: 0;
     border: none;
     border-radius: 0;
     padding: 1.5rem;
     resize: none;
     font-size: 0.9em;
     line-height: 1.6;
+    background-color: var(--background);
+    color: var(--text);
+}
+
+.assistant-panel {
+    border-right: none;
+}
+
+.preview-panel .panel-header h2 {
+    transition: opacity 0.2s ease-in-out;
+}
+.preview-panel .panel-content {
+    transition: opacity 0.2s ease-in-out;
+}
+.container.preview-collapsed .preview-panel .panel-header h2,
+.container.preview-collapsed .preview-panel .panel-content {
+    opacity: 0;
+    pointer-events: none;
+}
+
+.collapse-btn {
+    background: transparent;
+    border: none;
+    padding: 0;
+}
+.collapse-btn .icon {
+    font-size: 1.5rem;
 }
 
 .editor-preview {
@@ -562,6 +553,7 @@ video {
     height: 100%;
     overflow-y: auto;
 }
+
 
 /* Transcript Editor */
 .transcript-editor {
@@ -779,10 +771,10 @@ video {
   body > * {
     visibility: hidden;
   }
-  .panel.output-panel, .panel.output-panel * {
+  .panel.preview-panel, .panel.preview-panel * {
     visibility: visible;
   }
-  .panel.output-panel {
+  .panel.preview-panel {
     position: absolute;
     left: 0;
     top: 0;
@@ -794,7 +786,7 @@ video {
   }
 
   /* Hide UI elements */
-  header, .input-panel, .panel-header, .editor-tabs, .modal-overlay {
+  header, .input-panel, .middle-column, .panel-header, .modal-overlay, .collapse-btn {
     display: none !important;
   }
 
@@ -802,12 +794,9 @@ video {
   .container {
     display: block;
   }
-  .panel-content {
+  .panel-content, .editor-preview {
       overflow: visible;
       padding: 0 !important;
-  }
-  .editor-preview, .markdown-editor, .editor-content {
-      overflow: visible;
       height: auto;
       display: block;
   }
@@ -823,6 +812,10 @@ video {
 }
 
 /* Assistant Panel */
+.assistant-panel .panel-content {
+    padding: 0;
+}
+
 .chatbot-container {
     display: flex;
     flex-direction: column;
@@ -926,6 +919,34 @@ video {
     word-wrap: break-word;
 }
 
+.message-sources {
+    margin-top: 0.75rem;
+    padding-top: 0.5rem;
+    border-top: 1px solid rgba(0,0,0,0.1);
+    font-size: 0.85em;
+}
+.dark .message-sources {
+    border-top: 1px solid rgba(255,255,255,0.1);
+}
+.message-sources strong {
+    display: block;
+    margin-bottom: 0.25rem;
+}
+.message-sources ol {
+    padding-left: 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.message-sources a {
+    color: inherit;
+    text-decoration: underline;
+    opacity: 0.9;
+}
+.message-sources a:hover {
+    opacity: 1;
+}
+
 .add-context-btn {
     font-size: 0.8em;
     padding: 4px 8px;
@@ -973,29 +994,4 @@ video {
     width: 44px;
     height: 44px;
     padding: 0;
-}
-
-/* Responsive Layout */
-@media (max-width: 1200px) {
-    .container {
-        grid-template-columns: minmax(400px, 1fr) 1.5fr;
-    }
-}
-
-@media (max-width: 900px) {
-    .container {
-        grid-template-columns: 1fr;
-        overflow-y: auto;
-    }
-    .panel {
-        border-right: none;
-        border-bottom: 1px solid var(--border);
-        height: auto;
-    }
-    .panel:last-child {
-        border-bottom: none;
-    }
-    .panel-content {
-        max-height: 70vh;
-    }
 }

@@ -4,7 +4,7 @@
 */
 /* tslint:disable */
 
-import {GoogleGenAI, FunctionDeclaration, Type, Content} from '@google/genai';
+import {GoogleGenAI, FunctionDeclaration, Type, Content, GenerateContentResponse} from '@google/genai';
 
 const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
@@ -19,6 +19,11 @@ export interface DiarizedSegment {
   startTime: string; // e.g., "00:01:23.456"
   endTime: string;
   text: string;
+}
+
+export interface GroundingSource {
+    uri: string;
+    title: string;
 }
 
 const setDiarizedTranscriptFunctionDeclaration: FunctionDeclaration = {
@@ -237,7 +242,7 @@ export const getChatResponse = async (
     history: Content[],
     latestMessage: string,
     currentDraft?: string | null,
-) => {
+): Promise<{ text: string; sources: GroundingSource[] }> => {
     let systemInstruction;
     let userMessage = latestMessage;
 
@@ -247,19 +252,31 @@ If the user's request seems like an edit instruction (e.g., "change the title", 
 If the request is clearly a question and not an edit, provide a conversational answer.`;
         userMessage = `${latestMessage}\n\n(For context, here is the current document draft:\n---\n${currentDraft}\n---)`;
     } else {
-        systemInstruction = `You are a helpful AI assistant called ScreenGuide AI. You can answer questions related to the user's video and documentation.`;
+        systemInstruction = `You are a helpful AI assistant called ScreenGuide AI. You can answer questions related to the user's video and documentation. When relevant, use search to find up-to-date information.`;
     }
 
     const chat = ai.chats.create({
         model: 'gemini-2.5-flash',
         history,
         config: {
-            systemInstruction
+            systemInstruction,
+            tools: [{googleSearch: {}}],
         }
     });
 
-    const response = await chat.sendMessage({ message: userMessage });
-    return response.text;
+    const response: GenerateContentResponse = await chat.sendMessage({ message: userMessage });
+    
+    const text = response.text;
+    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+    
+    const sources: GroundingSource[] = groundingChunks
+        .filter(chunk => chunk.web)
+        .map(chunk => ({
+            uri: chunk.web.uri,
+            title: chunk.web.title,
+        }));
+
+    return { text, sources };
 }
 
 export {transcribeVideo, generateGuide, generateTimecodedCaptions};

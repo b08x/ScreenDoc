@@ -22,13 +22,14 @@ import c from 'classnames';
 import React, {useRef, useState} from 'react';
 import JSZip from 'jszip';
 import {timeToSecs} from './utils';
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, getChatResponse, DiarizedSegment, Caption} from './api';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, getChatResponse, DiarizedSegment, Caption, GroundingSource} from './api';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './exportUtils';
 import VideoPlayer from './VideoPlayer.jsx';
-import MarkdownEditor from './MarkdownEditor';
 import TranscriptEditor from './TranscriptEditor';
 import ContextModal from './ContextModal';
 import Chatbot from './Chatbot';
+import MermaidRenderer from './MermaidRenderer';
+import StyledMarkdown from './StyledMarkdown';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -177,6 +178,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
+  const [isPreviewCollapsed, setIsPreviewCollapsed] = useState(false);
 
   // Step states
   const [diarizedTranscript, setDiarizedTranscript] = useState<DiarizedSegment[]>([]);
@@ -198,12 +200,9 @@ export default function App() {
   const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   // Chatbot state
-  const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string}[]>([]);
+  const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string, sources?: GroundingSource[]}[]>([]);
   const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
   const [isBotReplying, setIsBotReplying] = useState(false);
-  
-  // UI State
-  const [activeMainTab, setActiveMainTab] = useState<'output' | 'assistant'>('output');
 
   const makeProgressUpdater = (startPercent: number, endPercent: number) => {
     return (taskProgress: number) => { // taskProgress is 0-100
@@ -232,7 +231,6 @@ export default function App() {
     setPendingFile(null);
     setChatMessages([]);
     setSelectedContext([]);
-    setActiveMainTab('output');
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -599,7 +597,6 @@ export default function App() {
 
   const handleSendMessage = async (message: string) => {
       setIsBotReplying(true);
-      setActiveMainTab('assistant');
       const newUserMessage = { id: Date.now(), sender: 'user' as const, text: message };
       const newMessages = [...chatMessages, newUserMessage];
       setChatMessages(newMessages);
@@ -610,7 +607,7 @@ export default function App() {
       }));
 
       try {
-          const responseText = await getChatResponse(
+          const { text: responseText, sources } = await getChatResponse(
               history,
               message,
               generatedContent,
@@ -624,10 +621,14 @@ export default function App() {
               const updatedDraft = match[1];
               setGeneratedContent(updatedDraft);
               botResponseText = responseText.replace(markdownBlockRegex, '').trim() || "I've updated the draft for you.";
-              setActiveMainTab('output');
           }
 
-          const newBotMessage = { id: Date.now() + 1, sender: 'bot' as const, text: botResponseText };
+          const newBotMessage = {
+              id: Date.now() + 1,
+              sender: 'bot' as const,
+              text: botResponseText,
+              sources: sources && sources.length > 0 ? sources : undefined,
+          };
           setChatMessages(prev => [...prev, newBotMessage]);
 
       } catch(e) {
@@ -660,16 +661,13 @@ export default function App() {
         <h1>ScreenGuide AI</h1>
         <p>Transform Screen Recordings into Technical Documentation</p>
       </header>
-      <div className="container">
+      <div className={c('container', {'preview-collapsed': isPreviewCollapsed})}>
         {/* INPUT PANEL */}
         <section className="panel input-panel">
-          <div className="panel-header">
-              <h2>Input & Setup</h2>
-          </div>
           <div className="panel-content">
             {/* Step 1: Provide Screencast */}
             <div className="step">
-              <h3>1. Provide a Screencast</h3>
+              <h2>1. Provide a Screencast</h2>
               <div className="input-group">
                 <div className="upload-box">
                   <p>Drag & Drop a video file here</p>
@@ -715,7 +713,7 @@ export default function App() {
 
             {/* Step 2: Review Transcription */}
             <div className={c('step', {disabled: !videoBase64})}>
-              <h3>2. Review Transcription & Captions</h3>
+              <h2>2. Review Transcription & Captions</h2>
               <TranscriptEditor
                 transcript={diarizedTranscript}
                 captions={timecodedCaptions}
@@ -726,7 +724,7 @@ export default function App() {
             
             {/* Step 3: Choose Format */}
             <div className={c('step', {disabled: !videoBase64})}>
-              <h3>3. Choose Output Format</h3>
+              <h2>3. Choose Output Format</h2>
               <div className="format-selector">
                 <label className={c({active: outputFormat === 'guide'})}>
                   <input type="radio" name="format" value="guide" checked={outputFormat === 'guide'} onChange={() => setOutputFormat('guide')} />
@@ -756,101 +754,99 @@ export default function App() {
           </div>
         </section>
 
-        {/* MAIN CONTENT PANEL (Output + Assistant) */}
-        <section className={c('panel', 'output-assistant-panel', { 'assistant-active': activeMainTab === 'assistant' })}>
-            <div className="panel-tabs">
-                <button 
-                    className={c('tab-button', { active: activeMainTab === 'output' })} 
-                    onClick={() => setActiveMainTab('output')}
-                >
-                    <span className="icon">article</span> Output
-                </button>
-                <button 
-                    className={c('tab-button', { active: activeMainTab === 'assistant' })}
-                    onClick={() => setActiveMainTab('assistant')}
-                >
-                    <span className="icon">smart_toy</span> AI Assistant
+        {/* MIDDLE COLUMN */}
+        <div className="middle-column">
+            {/* EDITOR PANEL */}
+            <section className="panel editor-panel">
+                <div className="panel-header">
+                    <h2>Editor</h2>
+                    {generatedContent && !isLoading && (
+                    <div className="output-actions">
+                        <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
+                        <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
+                        {outputFormat !== 'diagram' && (
+                            <button onClick={handleExportZip} disabled={isZipping}>
+                                <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
+                            </button>
+                        )}
+                        <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
+                        {outputFormat !== 'diagram' && (
+                            <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
+                        )}
+                        <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
+                    </div>
+                    )}
+                </div>
+                <div className="panel-content">
+                    {isLoading && (
+                    <div className="loading">
+                        <div className="spinner"></div>
+                        <p className="loading-message">{loadingMessage}</p>
+                        <div className="progress-bar-container">
+                            <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+                        </div>
+                        <p className="progress-percent">{Math.round(progress)}%</p>
+                    </div>
+                    )}
+                    {!isLoading && !generatedContent && (
+                        <div className="empty-output">
+                            <p>Your generated content will appear here.</p>
+                        </div>
+                    )}
+                    {!isLoading && generatedContent && (
+                        <textarea
+                            value={generatedContent}
+                            onChange={(e) => setGeneratedContent(e.target.value)}
+                            className="editor-textarea-full"
+                            aria-label="Markdown content editor"
+                        />
+                    )}
+                </div>
+            </section>
+            {/* ASSISTANT PANEL */}
+            <section className="panel assistant-panel">
+                <div className="panel-header">
+                    <h2>AI Assistant</h2>
+                </div>
+                <div className="panel-content">
+                <Chatbot
+                    messages={chatMessages}
+                    selectedContext={selectedContext}
+                    isBotReplying={isBotReplying}
+                    generatedContentExists={!!generatedContent}
+                    onSendMessage={handleSendMessage}
+                    onAddContext={handleAddContext}
+                    onRemoveContext={handleRemoveContext}
+                />
+                </div>
+            </section>
+        </div>
+
+        {/* PREVIEW PANEL */}
+        <section className="panel preview-panel">
+            <div className="panel-header">
+                <h2>Preview</h2>
+                <button onClick={() => setIsPreviewCollapsed(!isPreviewCollapsed)} className="collapse-btn" aria-label={isPreviewCollapsed ? 'Expand preview' : 'Collapse preview'}>
+                    <span className="icon">{isPreviewCollapsed ? 'keyboard_double_arrow_left' : 'keyboard_double_arrow_right'}</span>
                 </button>
             </div>
-
-            {activeMainTab === 'output' && (
-                <>
-                    <div className="panel-header">
-                        <h2>Generated Content</h2>
-                        {generatedContent && !isLoading && (
-                        <div className="output-actions">
-                            <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
-                            <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
-                            {outputFormat !== 'diagram' && (
-                                <button onClick={handleExportZip} disabled={isZipping}>
-                                    <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
-                                </button>
-                            )}
-                            <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
-                            {outputFormat !== 'diagram' && (
-                                <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
-                            )}
-                            <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
-                        </div>
-                        )}
+            <div className="panel-content editor-preview">
+                {!generatedContent && (
+                    <div className="empty-output">
+                        <p>Preview will appear here.</p>
                     </div>
-                    <div className="panel-content">
-                        {isProcessingVideo && (
-                        <div className="loading">
-                            <div className="spinner"></div>
-                            <p className="loading-message">{loadingMessage}</p>
-                            <div className="progress-bar-container">
-                                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-                            </div>
-                            <p className="progress-percent">{Math.round(progress)}%</p>
-                        </div>
-                        )}
-                        {isGenerating && (
-                        <div className="loading">
-                            <div className="spinner"></div>
-                            <p className="loading-message">{loadingMessage}</p>
-                            <div className="progress-bar-container">
-                                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-                            </div>
-                            <p className="progress-percent">{Math.round(progress)}%</p>
-                        </div>
-                        )}
-                        {!isLoading && !generatedContent && (
-                            <div className="empty-output">
-                                <p>Your generated content will appear here.</p>
-                            </div>
-                        )}
-                        {!isLoading && generatedContent && (
-                        <MarkdownEditor
-                            initialContent={generatedContent}
-                            onContentChange={setGeneratedContent}
-                            format={outputFormat as 'guide' | 'article' | 'diagram' | 'slides'}
-                            theme={theme}
-                        />
-                        )}
-                    </div>
-                </>
-            )}
-            
-            {activeMainTab === 'assistant' && (
-                <>
-                    <div className="panel-header">
-                        <h2>AI Assistant</h2>
-                    </div>
-                    <div className="panel-content">
-                        <Chatbot
-                            messages={chatMessages}
-                            selectedContext={selectedContext}
-                            isBotReplying={isBotReplying}
-                            generatedContentExists={!!generatedContent}
-                            onSendMessage={handleSendMessage}
-                            onAddContext={handleAddContext}
-                            onRemoveContext={handleRemoveContext}
-                        />
-                    </div>
-                </>
-            )}
+                )}
+                {generatedContent && (
+                    // FIX: Replaced `format` with the `outputFormat` state variable to resolve a 'Cannot find name' error and correctly render the preview based on the selected output format.
+                    outputFormat === 'diagram' ? (
+                        <MermaidRenderer content={generatedContent} theme={theme} />
+                    ) : (
+                        <StyledMarkdown content={generatedContent} />
+                    )
+                )}
+            </div>
         </section>
+
       </div>
       <ContextModal
         isOpen={isContextModalOpen}
