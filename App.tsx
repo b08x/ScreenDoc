@@ -485,7 +485,7 @@ export default function App() {
       try {
           const zip = new JSZip();
 
-          // 1. Session metadata
+          // 1. Session metadata (preserves original generated content)
           const sessionData = {
               userContext: {
                   videoDescription: videoDescription,
@@ -509,10 +509,42 @@ export default function App() {
               zip.folder("video")!.file(videoFile.name, videoFile);
           }
 
-          // 3. Generated output file
+          // 3. Generated output file and all associated image files.
           if (generatedContent) {
               const fileExtension = outputFormat === 'diagram' ? 'mmd' : 'md';
-              zip.folder("output")!.file(`output.${fileExtension}`, generatedContent);
+              const outputFolder = zip.folder("output")!;
+              let finalContent = generatedContent;
+
+              // For non-diagram formats, find image placeholders, extract frames,
+              // save them, and update the markdown to link to them.
+              if (videoUrl && outputFormat !== 'diagram') {
+                  const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
+                  if (imagePlaceholders.length > 0) {
+                      const imagesFolder = zip.folder("images")!;
+                      
+                      const imagePromises = imagePlaceholders.map((match, index) => {
+                          const timecode = match[2];
+                          const seconds = timeToSecs(timecode);
+                          return extractFrame(videoUrl, seconds).then(blob => ({ blob, index, match }));
+                      });
+                      
+                      const imageResults = await Promise.all(imagePromises);
+                      
+                      for (const { blob, index, match } of imageResults) {
+                          if (blob) {
+                              const imageName = `image-${index + 1}.png`;
+                              imagesFolder.file(imageName, blob);
+                              
+                              const placeholder = match[0];
+                              const description = match[1];
+                              // The output file is in `output/` and images are in `images/`. Relative path is `../images/`.
+                              finalContent = finalContent.replace(placeholder, `![${description}](../images/${imageName})`);
+                          }
+                      }
+                  }
+              }
+              // Save the final content (either original or with updated image links)
+              outputFolder.file(`output.${fileExtension}`, finalContent);
           }
           
           // 4. Subtitle files
@@ -523,27 +555,6 @@ export default function App() {
               
               const jsonContent = exportToJson(diarizedTranscript, timecodedCaptions);
               subtitlesFolder.file('transcript.json', jsonContent);
-          }
-
-          // 5. Image files from generated content
-          if (generatedContent && videoUrl) {
-              const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
-              if (imagePlaceholders.length > 0) {
-                  const imagesFolder = zip.folder("images")!;
-                  const imagePromises = imagePlaceholders.map((match) => {
-                      const timecode = match[2];
-                      const seconds = timeToSecs(timecode);
-                      return extractFrame(videoUrl, seconds);
-                  });
-                  
-                  const imageBlobs = await Promise.all(imagePromises);
-                  
-                  imageBlobs.forEach((blob, index) => {
-                      if (blob) {
-                          imagesFolder.file(`image-${index + 1}.png`, blob);
-                      }
-                  });
-              }
           }
 
           // Generate and download zip
