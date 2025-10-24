@@ -266,8 +266,17 @@ If the request is clearly a question and not an edit, provide a conversational a
         }
     });
     
-    const text = response.text;
-    const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
+    let text = '';
+    const candidate = response.candidates?.[0];
+
+    // Manually extract text from response parts for robustness.
+    // The `response.text` getter can sometimes fail to extract text correctly
+    // from complex responses, such as those including grounding information.
+    if (candidate?.content?.parts) {
+        text = candidate.content.parts.map(part => part.text ?? '').join('');
+    }
+    
+    const groundingChunks = candidate?.groundingMetadata?.groundingChunks ?? [];
     
     const sources: GroundingSource[] = groundingChunks
         .filter(chunk => chunk.web)
