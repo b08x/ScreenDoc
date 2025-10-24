@@ -45,12 +45,26 @@ const setDiarizedTranscriptFunctionDeclaration: FunctionDeclaration = {
     },
 };
 
-async function transcribeVideo({ videoBase64, mimeType }: { videoBase64: string; mimeType: string; }): Promise<DiarizedSegment[]> {
+interface TranscriptionParams {
+    videoBase64: string;
+    mimeType: string;
+    description?: string;
+    userPrompt?: string;
+}
+
+async function transcribeVideo({ videoBase64, mimeType, description, userPrompt }: TranscriptionParams): Promise<DiarizedSegment[]> {
   const model = 'gemini-2.5-pro';
-  const prompt = `Generate a verbatim text transcription of the audio in this video.
-  - Identify each speaker and label them consistently (e.g., "Speaker 1", "Speaker 2").
-  - Provide precise start and end timecodes for each spoken segment in HH:MM:SS.sss format.
-  - Use the 'set_diarized_transcript' function to format your response.`;
+  let prompt = `Generate a verbatim text transcription of the audio in this video.
+- Identify each speaker and label them consistently (e.g., "Speaker 1", "Speaker 2").
+- Provide precise start and end timecodes for each spoken segment in HH:MM:SS.sss format.
+- Use the 'set_diarized_transcript' function to format your response.`;
+
+  if (description) {
+    prompt += `\n\nFor context, this video is about: ${description}`;
+  }
+  if (userPrompt) {
+    prompt += `\n\nPay close attention to the following instructions: ${userPrompt}`;
+  }
 
   try {
     const response = await ai.models.generateContent({
@@ -96,9 +110,23 @@ const setTimecodesFunctionDeclaration: FunctionDeclaration = {
     },
 };
 
-async function generateTimecodedCaptions({ videoBase64, mimeType }: { videoBase64: string; mimeType: string; }): Promise<Caption[]> {
+interface CaptionParams {
+    videoBase64: string;
+    mimeType: string;
+    description?: string;
+    userPrompt?: string;
+}
+
+async function generateTimecodedCaptions({ videoBase64, mimeType, description, userPrompt }: CaptionParams): Promise<Caption[]> {
   const model = 'gemini-2.5-pro';
-  const prompt = `For each scene or significant event in this video, generate a caption describing the visual action and any spoken text (in quotes). Provide a precise start and end timecode for each caption in HH:MM:SS.sss format. Use the set_timecodes function to format the output.`;
+  let prompt = `For each scene or significant event in this video, generate a caption describing the visual action and any spoken text (in quotes). Provide a precise start and end timecode for each caption in HH:MM:SS.sss format. Use the set_timecodes function to format the output.`;
+
+  if (description) {
+    prompt += `\n\nFor context, this video is about: ${description}`;
+  }
+  if (userPrompt) {
+    prompt += `\n\nPay close attention to the following instructions: ${userPrompt}`;
+  }
 
   try {
     const response = await ai.models.generateContent({

@@ -7,7 +7,7 @@
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may may obtain a copy of the License at
+// You may obtain a copy of the License at
 
 //     https://www.apache.org/licenses/LICENSE-2.0
 
@@ -23,6 +23,7 @@ import {transcribeVideo, generateGuide, generateTimecodedCaptions, DiarizedSegme
 import VideoPlayer from './VideoPlayer.jsx';
 import MarkdownEditor from './MarkdownEditor';
 import TranscriptEditor from './TranscriptEditor';
+import ContextModal from './ContextModal';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -85,6 +86,26 @@ function simulateProgress<T>(
     });
 }
 
+// Helper for short, cosmetic loading steps to improve UX feedback
+const simulateShortProgress = (onProgress: (percent: number) => void): Promise<void> => {
+    return new Promise(resolve => {
+        let progress = 0;
+        onProgress(progress);
+        const interval = setInterval(() => {
+            progress += 15 + Math.random() * 10; // Faster progress
+            if (progress >= 100) {
+                clearInterval(interval);
+                onProgress(100);
+                // A short delay before resolving to ensure 100% is visible
+                setTimeout(resolve, 100);
+            } else {
+                onProgress(progress);
+            }
+        }, 120); // Faster interval
+    });
+};
+
+
 export default function App() {
   const [theme] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -97,9 +118,7 @@ export default function App() {
   const [videoMimeType, setVideoMimeType] = useState('');
   const [error, setError] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [isListening, setIsListening] = useState(false);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
-  const speechRecognizer = useRef<any>(null);
 
   // Step states
   const [diarizedTranscript, setDiarizedTranscript] = useState<DiarizedSegment[]>([]);
@@ -114,6 +133,10 @@ export default function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [progress, setProgress] = useState(0);
+
+  // Modal and pending file state
+  const [isContextModalOpen, setIsContextModalOpen] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
 
   const resetState = () => {
     setVideoFile(null);
@@ -131,9 +154,10 @@ export default function App() {
     setIsGenerating(false);
     setLoadingMessage('');
     setProgress(0);
+    setPendingFile(null);
   };
 
-  const handleFileUpload = async (file: File | null) => {
+  const handleFileSelect = (file: File | null) => {
     if (!file) return;
 
     if (file.size > MAX_FILE_SIZE_BYTES) {
@@ -144,28 +168,46 @@ export default function App() {
       setError('Invalid file type. Please upload a video file.');
       return;
     }
-
     resetState();
-    setVideoFile(file);
-    setVideoUrl(URL.createObjectURL(file));
+    setPendingFile(file);
+    setIsContextModalOpen(true);
+  };
+
+  const startProcessingAndCloseModal = async () => {
+    setIsContextModalOpen(false);
+    if (!pendingFile) return;
+
+    setVideoFile(pendingFile);
+    setVideoUrl(URL.createObjectURL(pendingFile));
     setIsProcessingVideo(true);
     setError('');
 
     try {
       setLoadingMessage('Reading video file...');
-      const base64Data = await fileToBase64(file, setProgress);
+      const base64Data = await fileToBase64(pendingFile, setProgress);
       setVideoBase64(base64Data);
-      setVideoMimeType(file.type);
+      setVideoMimeType(pendingFile.type);
 
-      setLoadingMessage('Transcribing audio & generating speaker labels...');
-      setProgress(0);
-      const transcriptionPromise = transcribeVideo({ videoBase64: base64Data, mimeType: file.type });
+      setLoadingMessage('Analyzing audio...');
+      await simulateShortProgress(setProgress);
+
+      setLoadingMessage('Generating speaker diarization...');
+      const transcriptionPromise = transcribeVideo({ 
+          videoBase64: base64Data, 
+          mimeType: pendingFile.type,
+          description: videoDescription,
+          userPrompt: userPrompt,
+      });
       const transcribedText = await simulateProgress(transcriptionPromise, setProgress);
       setDiarizedTranscript(transcribedText);
       
-      setLoadingMessage('Generating video captions...');
-      setProgress(0);
-      const captionsPromise = generateTimecodedCaptions({ videoBase64: base64Data, mimeType: file.type });
+      setLoadingMessage('Creating captions...');
+      const captionsPromise = generateTimecodedCaptions({ 
+          videoBase64: base64Data, 
+          mimeType: pendingFile.type,
+          description: videoDescription,
+          userPrompt: userPrompt,
+      });
       const captions = await simulateProgress(captionsPromise, setProgress);
       setTimecodedCaptions(captions || []);
 
@@ -176,8 +218,10 @@ export default function App() {
       setIsProcessingVideo(false);
       setLoadingMessage('');
       setProgress(0);
+      setPendingFile(null); // Clear pending file after processing
     }
   };
+
 
   const handleGenerate = async () => {
     if (!videoBase64 || diarizedTranscript.length === 0) {
@@ -243,7 +287,7 @@ export default function App() {
       mediaRecorder.current.onstop = () => {
         const blob = new Blob(recordedChunks, {type: 'video/webm'});
         const file = new File([blob], 'recording.webm', {type: 'video/webm'});
-        handleFileUpload(file);
+        handleFileSelect(file);
         setIsRecording(false);
         stream.getTracks().forEach(track => track.stop());
       };
@@ -259,45 +303,6 @@ export default function App() {
     if (mediaRecorder.current) {
       mediaRecorder.current.stop();
     }
-  };
-
-  const handleVoiceInput = () => {
-    if (isListening) {
-      speechRecognizer.current?.stop();
-      setIsListening(false);
-      return;
-    }
-
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      setError("Speech recognition is not supported in this browser.");
-      return;
-    }
-
-    speechRecognizer.current = new SpeechRecognition();
-    speechRecognizer.current.continuous = true;
-    speechRecognizer.current.interimResults = true;
-
-    speechRecognizer.current.onstart = () => setIsListening(true);
-    speechRecognizer.current.onend = () => setIsListening(false);
-    speechRecognizer.current.onerror = (e) => {
-      console.error("Speech recognition error", e);
-      setIsListening(false);
-    };
-
-    speechRecognizer.current.onresult = (event) => {
-      let finalTranscript = '';
-      for (let i = event.resultIndex; i < event.results.length; ++i) {
-        if (event.results[i].isFinal) {
-          finalTranscript += event.results[i][0].transcript;
-        }
-      }
-      if (finalTranscript) {
-        setUserPrompt(prev => prev ? `${prev.trim()} ${finalTranscript}` : finalTranscript);
-      }
-    };
-
-    speechRecognizer.current.start();
   };
   
   const copyToClipboard = () => {
@@ -321,7 +326,7 @@ export default function App() {
   const onDrop = (e: React.DragEvent<HTMLElement>) => {
     e.preventDefault();
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      handleFileUpload(e.dataTransfer.files[0]);
+      handleFileSelect(e.dataTransfer.files[0]);
       e.dataTransfer.clearData();
     }
   };
@@ -356,8 +361,9 @@ export default function App() {
                     id="file-upload"
                     type="file"
                     accept="video/*"
-                    onChange={(e) => handleFileUpload(e.target.files ? e.target.files[0] : null)}
+                    onChange={(e) => handleFileSelect(e.target.files ? e.target.files[0] : null)}
                     style={{display: 'none'}}
+                    value="" // Ensure onChange fires for the same file
                   />
                   <p className="light-text info">Max file size: {MAX_FILE_SIZE_MB}MB</p>
                 </div>
@@ -398,47 +404,9 @@ export default function App() {
               />
             </div>
             
-            {/* Step 3: Add Context */}
+            {/* Step 3: Choose Format */}
             <div className={c('step', {disabled: !videoBase64})}>
-              <h2>3. Add Context & Instructions</h2>
-              <label>Video Description (Optional)</label>
-              <input 
-                type="text" 
-                value={videoDescription}
-                onChange={(e) => setVideoDescription(e.target.value)}
-                placeholder="e.g., A tutorial on setting up a new project" 
-                disabled={!videoBase64 || isLoading}
-              />
-              <label>User Prompt (Optional)</label>
-              <div className="prompt-area">
-                <textarea
-                  value={userPrompt}
-                  onChange={(e) => setUserPrompt(e.target.value)}
-                  placeholder="Give specific instructions to the AI..."
-                  rows={4}
-                  disabled={!videoBase64 || isLoading}
-                />
-                <button 
-                    className={c('mic-button', {active: isListening})}
-                    onClick={handleVoiceInput}
-                    title="Dictate prompt"
-                    disabled={!videoBase64 || isLoading}
-                >
-                    <span className="icon">mic</span>
-                </button>
-              </div>
-              <div className="prompt-examples">
-                {PROMPT_EXAMPLES.map((p) => (
-                  <button key={p} onClick={() => setUserPrompt(p)} disabled={!videoBase64 || isLoading}>
-                    {p}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Step 4: Choose Format */}
-            <div className={c('step', {disabled: !videoBase64})}>
-              <h2>4. Choose Output Format</h2>
+              <h2>3. Choose Output Format</h2>
               <div className="format-selector">
                 <label className={c({active: outputFormat === 'guide'})}>
                   <input type="radio" name="format" value="guide" checked={outputFormat === 'guide'} onChange={() => setOutputFormat('guide')} />
@@ -459,7 +427,7 @@ export default function App() {
               </div>
             </div>
 
-             {/* Step 5: Generate */}
+             {/* Step 4: Generate */}
             <div className={c('step', {disabled: !videoBase64})}>
                 <button className="button generate-button" onClick={handleGenerate} disabled={!videoBase64 || isLoading}>
                   ▶️ Generate Content
@@ -494,6 +462,10 @@ export default function App() {
               <div className="loading">
                 <div className="spinner"></div>
                 <p className="loading-message">{loadingMessage}</p>
+                <div className="progress-bar-container">
+                    <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+                </div>
+                <p className="progress-percent">{Math.round(progress)}%</p>
               </div>
             )}
             {!isLoading && !generatedContent && (
@@ -512,6 +484,18 @@ export default function App() {
           </div>
         </section>
       </div>
+      <ContextModal
+        isOpen={isContextModalOpen}
+        onClose={() => {
+            setIsContextModalOpen(false);
+            setPendingFile(null);
+        }}
+        onSubmit={startProcessingAndCloseModal}
+        description={videoDescription}
+        setDescription={setVideoDescription}
+        prompt={userPrompt}
+        setPrompt={setUserPrompt}
+      />
     </main>
   );
 }
