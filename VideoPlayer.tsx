@@ -19,11 +19,7 @@
 
 import {useEffect, useRef, useState} from 'react';
 import {timeToSecs} from './utils';
-
-interface Caption {
-  time: string;
-  text: string;
-}
+import { Caption } from './api';
 
 export default function VideoPlayer({
   url,
@@ -45,7 +41,7 @@ export default function VideoPlayer({
         // Find current caption
         const current = [...captions]
           .reverse()
-          .find((c) => video.currentTime >= timeToSecs(c.time));
+          .find((c) => video.currentTime >= timeToSecs(c.startTime));
         setCurrentCaption(current ? current.text : '');
       };
 
@@ -109,7 +105,7 @@ export default function VideoPlayer({
               className="progress"
               style={{width: `${(currentTime / duration) * 100}%`}}></div>
             {captions.map((caption, index) => {
-              const seconds = timeToSecs(caption.time);
+              const seconds = timeToSecs(caption.startTime);
               const position = (seconds / duration) * 100;
               if (position > 100) return null;
               return (

@@ -7,7 +7,7 @@
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
+// You may may obtain a copy of the License at
 
 //     https://www.apache.org/licenses/LICENSE-2.0
 
@@ -18,16 +18,11 @@
 // limitations under the License.
 
 import c from 'classnames';
-import {useRef, useState, useEffect} from 'react';
-import mermaid from 'mermaid';
-import {transcribeVideo, generateGuide, generateTimecodedCaptions} from './api';
+import {useRef, useState} from 'react';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, DiarizedSegment, Caption} from './api';
 import VideoPlayer from './VideoPlayer.jsx';
-
-// Fix: Define Caption interface for type safety. This is used for timecodedCaptions state.
-interface Caption {
-  time: string;
-  text: string;
-}
+import MarkdownEditor from './MarkdownEditor';
+import TranscriptEditor from './TranscriptEditor';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -90,90 +85,6 @@ function simulateProgress<T>(
     });
 }
 
-
-// A simple markdown to HTML converter component
-// FIX: Added type for 'content' prop to resolve 'Cannot find name 'content'' error.
-function MarkdownRenderer({content}: {content: string}) {
-  const convertMarkdownToHTML = (text: string) => {
-    if (!text) return '';
-    let html = text
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#039;');
-
-    // Headers
-    html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
-    html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
-    html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
-    // Bold
-    html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
-    // Italic
-    html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
-    // Lists
-    html = html.replace(/^\s*[-*] (.*)/gim, '<li>$1</li>');
-    html = html.replace(/<li>/g, '<ul><li>');
-    html = html.replace(/<\/li>\n<ul>/g, '</li><li>');
-    html = html.replace(/<\/li>\n((?!<li>).)/g, '</li></ul>\n$1');
-    html = html.replace(/<\/li>$/, '</li></ul>');
-    // Numbered Lists
-    html = html.replace(/^\s*\d+\. (.*)/gim, '<li>$1</li>');
-    html = html.replace(/<li>/g, '<ol><li>');
-    html = html.replace(/<\/li>\n<ol>/g, '</li><li>');
-    html = html.replace(/<\/li>\n((?!<li>).)/g, '</li></ol>\n$1');
-    html = html.replace(/<\/li>$/, '</li></ul>');
-    // Image placeholders
-    html = html.replace(
-      /\[Image: (.*?)\]/gim,
-      '<div class="image-placeholder">🖼️ $1</div>',
-    );
-    // Newlines
-    html = html.replace(/\n/g, '<br />');
-    return html;
-  };
-
-  return (
-    <div
-      className="markdown-content"
-      dangerouslySetInnerHTML={{__html: convertMarkdownToHTML(content)}}
-    />
-  );
-}
-
-function MermaidRenderer({ content, theme }: { content: string, theme: string }) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const [error, setError] = useState('');
-  
-  useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: theme === 'dark' ? 'dark' : 'default',
-    });
-
-    if (content && containerRef.current) {
-      setError('');
-      containerRef.current.innerHTML = ''; // Clear previous render
-      try {
-        mermaid.render('mermaid-graph', content, (svgCode) => {
-          if (containerRef.current) {
-            containerRef.current.innerHTML = svgCode;
-          }
-        });
-      } catch (e) {
-        console.error("Mermaid rendering error:", e);
-        setError("Could not render the diagram. The generated syntax might be invalid.");
-      }
-    }
-  }, [content, theme]);
-
-  if (error) {
-    return <div className="error-message">{error}</div>
-  }
-
-  return <div ref={containerRef} className="mermaid-content"></div>;
-}
-
 export default function App() {
   const [theme] = useState(
     window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
@@ -191,8 +102,7 @@ export default function App() {
   const speechRecognizer = useRef<any>(null);
 
   // Step states
-  const [transcript, setTranscript] = useState('');
-  // Fix: Strongly type the `timecodedCaptions` state to resolve type errors.
+  const [diarizedTranscript, setDiarizedTranscript] = useState<DiarizedSegment[]>([]);
   const [timecodedCaptions, setTimecodedCaptions] = useState<Caption[]>([]);
   const [videoDescription, setVideoDescription] = useState('');
   const [userPrompt, setUserPrompt] = useState('');
@@ -211,7 +121,7 @@ export default function App() {
     setVideoBase64('');
     setVideoMimeType('');
     setError('');
-    setTranscript('');
+    setDiarizedTranscript([]);
     setTimecodedCaptions([]);
     setVideoDescription('');
     setUserPrompt('');
@@ -247,11 +157,11 @@ export default function App() {
       setVideoBase64(base64Data);
       setVideoMimeType(file.type);
 
-      setLoadingMessage('Transcribing audio...');
+      setLoadingMessage('Transcribing audio & generating speaker labels...');
       setProgress(0);
       const transcriptionPromise = transcribeVideo({ videoBase64: base64Data, mimeType: file.type });
       const transcribedText = await simulateProgress(transcriptionPromise, setProgress);
-      setTranscript(transcribedText);
+      setDiarizedTranscript(transcribedText);
       
       setLoadingMessage('Generating video captions...');
       setProgress(0);
@@ -270,7 +180,7 @@ export default function App() {
   };
 
   const handleGenerate = async () => {
-    if (!videoBase64 || !transcript) {
+    if (!videoBase64 || diarizedTranscript.length === 0) {
       setError('Missing video or transcript.');
       return;
     }
@@ -282,10 +192,11 @@ export default function App() {
     setProgress(0);
 
     try {
+      const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
       const generationPromise = generateGuide({
         videoBase64,
         mimeType: videoMimeType,
-        transcript: transcript,
+        transcript: transcriptString,
         description: videoDescription,
         prompt: userPrompt,
         format: outputFormat,
@@ -478,13 +389,12 @@ export default function App() {
 
             {/* Step 2: Review Transcription */}
             <div className={c('step', {disabled: !videoBase64})}>
-              <h2>2. Review Transcription</h2>
-              <textarea
-                value={transcript}
-                onChange={(e) => setTranscript(e.target.value)}
-                placeholder="AI-generated transcript will appear here..."
-                rows={8}
-                disabled={!videoBase64 || isLoading}
+              <h2>2. Review Transcription & Captions</h2>
+              <TranscriptEditor
+                transcript={diarizedTranscript}
+                captions={timecodedCaptions}
+                onTranscriptChange={setDiarizedTranscript}
+                onCaptionsChange={setTimecodedCaptions}
               />
             </div>
             
@@ -538,6 +448,10 @@ export default function App() {
                   <input type="radio" name="format" value="article" checked={outputFormat === 'article'} onChange={() => setOutputFormat('article')} />
                   Knowledge Base Article
                 </label>
+                <label className={c({active: outputFormat === 'slides'})}>
+                  <input type="radio" name="format" value="slides" checked={outputFormat === 'slides'} onChange={() => setOutputFormat('slides')} />
+                  Presentation Slides
+                </label>
                 <label className={c({active: outputFormat === 'diagram'})}>
                   <input type="radio" name="format" value="diagram" checked={outputFormat === 'diagram'} onChange={() => setOutputFormat('diagram')} />
                   Diagram / Flowchart
@@ -588,9 +502,12 @@ export default function App() {
                 </div>
             )}
             {!isLoading && generatedContent && (
-              outputFormat === 'diagram' ?
-              <MermaidRenderer content={generatedContent} theme={theme} /> :
-              <MarkdownRenderer content={generatedContent} />
+              <MarkdownEditor
+                initialContent={generatedContent}
+                onContentChange={setGeneratedContent}
+                format={outputFormat as 'guide' | 'article' | 'diagram' | 'slides'}
+                theme={theme}
+              />
             )}
           </div>
         </section>
