@@ -420,7 +420,7 @@ export default function App() {
       try {
           const zip = new JSZip();
           let updatedContent = generatedContent;
-          const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*)\s+at\s+([0-9:.]+)]/gi)];
+          const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)(?:\s+at\s+([0-9:.]+))?\]/gi)];
   
           if (imagePlaceholders.length > 0) {
               const imagesFolder = zip.folder("images");
@@ -431,19 +431,21 @@ export default function App() {
                   const description = match[1];
                   const timecode = match[2];
                   
-                  try {
-                      const seconds = timeToSecs(timecode);
-                      const blob = await extractFrame(videoUrl, seconds);
-                      if (blob) {
-                          const imageName = `image-${index + 1}.png`;
-                          imagesFolder.file(imageName, blob);
-                          const replacementText = `![${description}](./images/${imageName})`;
-                          return { placeholder, replacementText };
+                  if (timecode) {
+                      try {
+                          const seconds = timeToSecs(timecode);
+                          const blob = await extractFrame(videoUrl, seconds);
+                          if (blob) {
+                              const imageName = `image-${index + 1}.png`;
+                              imagesFolder.file(imageName, blob);
+                              const replacementText = `![${description}](./images/${imageName})`;
+                              return { placeholder, replacementText };
+                          }
+                      } catch (e) {
+                          console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                       }
-                  } catch (e) {
-                      console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                   }
-                  return null; // Return null if extraction fails
+                  return null; // Return null if extraction fails or no timecode
               }));
 
               const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
@@ -526,7 +528,7 @@ export default function App() {
               let finalContent = generatedContent;
 
               if (videoUrl && outputFormat !== 'diagram') {
-                  const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*)\s+at\s+([0-9:.]+)]/gi)];
+                  const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)(?:\s+at\s+([0-9:.]+))?\]/gi)];
                   if (imagePlaceholders.length > 0) {
                       const imagesFolder = zip.folder("images");
                       if (!imagesFolder) throw new Error("Could not create images folder.");
@@ -536,17 +538,19 @@ export default function App() {
                           const description = match[1];
                           const timecode = match[2];
                           
-                          try {
-                              const seconds = timeToSecs(timecode);
-                              const blob = await extractFrame(videoUrl, seconds);
-                              if (blob) {
-                                  const imageName = `image-${index + 1}.png`;
-                                  imagesFolder.file(imageName, blob);
-                                  const replacementText = `![${description}](../images/${imageName})`;
-                                  return { placeholder, replacementText };
-                              }
-                          } catch (e) {
-                              console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+                          if (timecode) {
+                            try {
+                                const seconds = timeToSecs(timecode);
+                                const blob = await extractFrame(videoUrl, seconds);
+                                if (blob) {
+                                    const imageName = `image-${index + 1}.png`;
+                                    imagesFolder.file(imageName, blob);
+                                    const replacementText = `![${description}](../images/${imageName})`;
+                                    return { placeholder, replacementText };
+                                }
+                            } catch (e) {
+                                console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+                            }
                           }
                           return null;
                       }));

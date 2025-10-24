@@ -255,16 +255,16 @@ If the request is clearly a question and not an edit, provide a conversational a
         systemInstruction = `You are a helpful AI assistant called ScreenGuide AI. You can answer questions related to the user's video and documentation. When relevant, use search to find up-to-date information.`;
     }
 
-    const chat = ai.chats.create({
+    const contents = [...history, {role: 'user', parts: [{text: userMessage}]}];
+
+    const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',
-        history,
+        contents,
         config: {
             systemInstruction,
             tools: [{googleSearch: {}}],
         }
     });
-
-    const response: GenerateContentResponse = await chat.sendMessage({ message: userMessage });
     
     const text = response.text;
     const groundingChunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks ?? [];
