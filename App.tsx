@@ -201,6 +201,9 @@ export default function App() {
   const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string}[]>([]);
   const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
   const [isBotReplying, setIsBotReplying] = useState(false);
+  
+  // UI State
+  const [activeMainTab, setActiveMainTab] = useState<'output' | 'assistant'>('output');
 
   const makeProgressUpdater = (startPercent: number, endPercent: number) => {
     return (taskProgress: number) => { // taskProgress is 0-100
@@ -229,6 +232,7 @@ export default function App() {
     setPendingFile(null);
     setChatMessages([]);
     setSelectedContext([]);
+    setActiveMainTab('output');
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -411,47 +415,55 @@ export default function App() {
 
   const handleExportZip = async () => {
       if (!generatedContent || !videoUrl || outputFormat === 'diagram') return;
-
+  
       setIsZipping(true);
       setError('');
-
+  
       try {
           const zip = new JSZip();
           let updatedContent = generatedContent;
           const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
-
+  
           if (imagePlaceholders.length > 0) {
               const imagesFolder = zip.folder("images");
               if (!imagesFolder) throw new Error("Could not create images folder in zip.");
-
-              const imagePromises = imagePlaceholders.map((match, index) => {
+  
+              const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
+                  const placeholder = match[0];
+                  const description = match[1];
                   const timecode = match[2];
-                  const seconds = timeToSecs(timecode);
-                  return extractFrame(videoUrl, seconds).then(blob => ({ blob, match, index }));
-              });
-
-              const imageResults = await Promise.all(imagePromises);
-
-              for (const { blob, match, index } of imageResults) {
-                  if (blob) {
-                      const imageName = `image-${index + 1}.png`;
-                      imagesFolder.file(imageName, blob);
-                      
-                      const placeholder = match[0];
-                      const description = match[1];
-                      updatedContent = updatedContent.replace(placeholder, `![${description}](./images/${imageName})`);
+                  
+                  try {
+                      const seconds = timeToSecs(timecode);
+                      const blob = await extractFrame(videoUrl, seconds);
+                      if (blob) {
+                          const imageName = `image-${index + 1}.png`;
+                          imagesFolder.file(imageName, blob);
+                          const replacementText = `![${description}](./images/${imageName})`;
+                          return { placeholder, replacementText };
+                      }
+                  } catch (e) {
+                      console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                   }
+                  return null; // Return null if extraction fails
+              }));
+
+              const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
+  
+              // Sequentially replace placeholders to handle duplicates correctly
+              for (const rep of validReplacements) {
+                  updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
               }
           }
-
+  
           zip.file('guide.md', updatedContent);
-
+  
           const zipBlob = await zip.generateAsync({type: 'blob'});
           downloadFile('ScreenGuide-Export.zip', zipBlob, 'application/zip');
-
+  
       } catch (e) {
           console.error("Error creating zip file:", e);
-          setError("Failed to create zip file. Could not extract frames from video.");
+          setError("Failed to create zip file. Some frames could not be extracted.");
       } finally {
           setIsZipping(false);
       }
@@ -521,23 +533,30 @@ export default function App() {
                       const imagesFolder = zip.folder("images");
                       if (!imagesFolder) throw new Error("Could not create images folder.");
                       
-                      const imagePromises = imagePlaceholders.map((match, index) => {
+                      const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
+                          const placeholder = match[0];
+                          const description = match[1];
                           const timecode = match[2];
-                          const seconds = timeToSecs(timecode);
-                          return extractFrame(videoUrl, seconds).then(blob => ({ blob, index, match }));
-                      });
-                      
-                      const imageResults = await Promise.all(imagePromises);
-                      
-                      for (const { blob, index, match } of imageResults) {
-                          if (blob) {
-                              const imageName = `image-${index + 1}.png`;
-                              imagesFolder.file(imageName, blob);
-                              
-                              const placeholder = match[0];
-                              const description = match[1];
-                              finalContent = finalContent.replace(placeholder, `![${description}](../images/${imageName})`);
+                          
+                          try {
+                              const seconds = timeToSecs(timecode);
+                              const blob = await extractFrame(videoUrl, seconds);
+                              if (blob) {
+                                  const imageName = `image-${index + 1}.png`;
+                                  imagesFolder.file(imageName, blob);
+                                  const replacementText = `![${description}](../images/${imageName})`;
+                                  return { placeholder, replacementText };
+                              }
+                          } catch (e) {
+                              console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                           }
+                          return null;
+                      }));
+
+                      const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
+                      
+                      for (const rep of validReplacements) {
+                          finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
                       }
                   }
               }
@@ -580,6 +599,7 @@ export default function App() {
 
   const handleSendMessage = async (message: string) => {
       setIsBotReplying(true);
+      setActiveMainTab('assistant');
       const newUserMessage = { id: Date.now(), sender: 'user' as const, text: message };
       const newMessages = [...chatMessages, newUserMessage];
       setChatMessages(newMessages);
@@ -604,6 +624,7 @@ export default function App() {
               const updatedDraft = match[1];
               setGeneratedContent(updatedDraft);
               botResponseText = responseText.replace(markdownBlockRegex, '').trim() || "I've updated the draft for you.";
+              setActiveMainTab('output');
           }
 
           const newBotMessage = { id: Date.now() + 1, sender: 'bot' as const, text: botResponseText };
@@ -642,10 +663,13 @@ export default function App() {
       <div className="container">
         {/* INPUT PANEL */}
         <section className="panel input-panel">
+          <div className="panel-header">
+              <h2>Input & Setup</h2>
+          </div>
           <div className="panel-content">
             {/* Step 1: Provide Screencast */}
             <div className="step">
-              <h2>1. Provide a Screencast</h2>
+              <h3>1. Provide a Screencast</h3>
               <div className="input-group">
                 <div className="upload-box">
                   <p>Drag & Drop a video file here</p>
@@ -691,7 +715,7 @@ export default function App() {
 
             {/* Step 2: Review Transcription */}
             <div className={c('step', {disabled: !videoBase64})}>
-              <h2>2. Review Transcription & Captions</h2>
+              <h3>2. Review Transcription & Captions</h3>
               <TranscriptEditor
                 transcript={diarizedTranscript}
                 captions={timecodedCaptions}
@@ -702,7 +726,7 @@ export default function App() {
             
             {/* Step 3: Choose Format */}
             <div className={c('step', {disabled: !videoBase64})}>
-              <h2>3. Choose Output Format</h2>
+              <h3>3. Choose Output Format</h3>
               <div className="format-selector">
                 <label className={c({active: outputFormat === 'guide'})}>
                   <input type="radio" name="format" value="guide" checked={outputFormat === 'guide'} onChange={() => setOutputFormat('guide')} />
@@ -732,80 +756,100 @@ export default function App() {
           </div>
         </section>
 
-        {/* OUTPUT PANEL */}
-        <section className="panel output-panel">
-          <div className="panel-header">
-            <h2>Output</h2>
-            {generatedContent && !isLoading && (
-              <div className="output-actions">
-                <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
-                <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
-                {outputFormat !== 'diagram' && (
-                    <button onClick={handleExportZip} disabled={isZipping}>
-                        <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
-                    </button>
-                )}
-                <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
-                {outputFormat !== 'diagram' && (
-                    <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
-                )}
-                <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
-              </div>
-            )}
-          </div>
-          <div className="panel-content">
-            {isProcessingVideo && (
-              <div className="loading">
-                <div className="spinner"></div>
-                <p className="loading-message">{loadingMessage}</p>
-                <div className="progress-bar-container">
-                    <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-                </div>
-                <p className="progress-percent">{Math.round(progress)}%</p>
-              </div>
-            )}
-            {isGenerating && (
-              <div className="loading">
-                <div className="spinner"></div>
-                <p className="loading-message">{loadingMessage}</p>
-                <div className="progress-bar-container">
-                    <div className="progress-bar" style={{ width: `${progress}%` }}></div>
-                </div>
-                <p className="progress-percent">{Math.round(progress)}%</p>
-              </div>
-            )}
-            {!isLoading && !generatedContent && (
-                <div className="empty-output">
-                    <p>Your generated content will appear here.</p>
-                </div>
-            )}
-            {!isLoading && generatedContent && (
-              <MarkdownEditor
-                initialContent={generatedContent}
-                onContentChange={setGeneratedContent}
-                format={outputFormat as 'guide' | 'article' | 'diagram' | 'slides'}
-                theme={theme}
-              />
-            )}
-          </div>
-        </section>
+        {/* MAIN CONTENT PANEL (Output + Assistant) */}
+        <section className={c('panel', 'output-assistant-panel', { 'assistant-active': activeMainTab === 'assistant' })}>
+            <div className="panel-tabs">
+                <button 
+                    className={c('tab-button', { active: activeMainTab === 'output' })} 
+                    onClick={() => setActiveMainTab('output')}
+                >
+                    <span className="icon">article</span> Output
+                </button>
+                <button 
+                    className={c('tab-button', { active: activeMainTab === 'assistant' })}
+                    onClick={() => setActiveMainTab('assistant')}
+                >
+                    <span className="icon">smart_toy</span> AI Assistant
+                </button>
+            </div>
 
-        {/* ASSISTANT PANEL */}
-        <section className="panel assistant-panel">
-            <div className="panel-header">
-                <h2>AI Assistant</h2>
-            </div>
-            <div className="panel-content">
-              <Chatbot
-                  messages={chatMessages}
-                  selectedContext={selectedContext}
-                  isBotReplying={isBotReplying}
-                  generatedContentExists={!!generatedContent}
-                  onSendMessage={handleSendMessage}
-                  onAddContext={handleAddContext}
-                  onRemoveContext={handleRemoveContext}
-              />
-            </div>
+            {activeMainTab === 'output' && (
+                <>
+                    <div className="panel-header">
+                        <h2>Generated Content</h2>
+                        {generatedContent && !isLoading && (
+                        <div className="output-actions">
+                            <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
+                            <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
+                            {outputFormat !== 'diagram' && (
+                                <button onClick={handleExportZip} disabled={isZipping}>
+                                    <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
+                                </button>
+                            )}
+                            <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
+                            {outputFormat !== 'diagram' && (
+                                <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
+                            )}
+                            <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
+                        </div>
+                        )}
+                    </div>
+                    <div className="panel-content">
+                        {isProcessingVideo && (
+                        <div className="loading">
+                            <div className="spinner"></div>
+                            <p className="loading-message">{loadingMessage}</p>
+                            <div className="progress-bar-container">
+                                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <p className="progress-percent">{Math.round(progress)}%</p>
+                        </div>
+                        )}
+                        {isGenerating && (
+                        <div className="loading">
+                            <div className="spinner"></div>
+                            <p className="loading-message">{loadingMessage}</p>
+                            <div className="progress-bar-container">
+                                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+                            </div>
+                            <p className="progress-percent">{Math.round(progress)}%</p>
+                        </div>
+                        )}
+                        {!isLoading && !generatedContent && (
+                            <div className="empty-output">
+                                <p>Your generated content will appear here.</p>
+                            </div>
+                        )}
+                        {!isLoading && generatedContent && (
+                        <MarkdownEditor
+                            initialContent={generatedContent}
+                            onContentChange={setGeneratedContent}
+                            format={outputFormat as 'guide' | 'article' | 'diagram' | 'slides'}
+                            theme={theme}
+                        />
+                        )}
+                    </div>
+                </>
+            )}
+            
+            {activeMainTab === 'assistant' && (
+                <>
+                    <div className="panel-header">
+                        <h2>AI Assistant</h2>
+                    </div>
+                    <div className="panel-content">
+                        <Chatbot
+                            messages={chatMessages}
+                            selectedContext={selectedContext}
+                            isBotReplying={isBotReplying}
+                            generatedContentExists={!!generatedContent}
+                            onSendMessage={handleSendMessage}
+                            onAddContext={handleAddContext}
+                            onRemoveContext={handleRemoveContext}
+                        />
+                    </div>
+                </>
+            )}
         </section>
       </div>
       <ContextModal

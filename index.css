@@ -44,14 +44,13 @@ h1, h2, h3, h4, h5, h6 {
 
 h2 {
   font-size: 1.1em;
-  padding-bottom: 0.5em;
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 1em;
 }
 
 h3 {
   font-size: 1em;
-  margin-bottom: 0.75rem;
+  padding-bottom: 0.5em;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1em;
 }
 
 input, textarea {
@@ -103,7 +102,7 @@ button:disabled {
   background-color: transparent;
 }
 
-button .icon, .button .icon {
+button .icon, .button .icon, .tab-button .icon {
   font-family: "Material Symbols Outlined";
   font-weight: 300;
   line-height: 1;
@@ -136,7 +135,7 @@ header p {
 
 .container {
   display: grid;
-  grid-template-columns: 1.2fr 1.2fr 1fr;
+  grid-template-columns: minmax(450px, 1.2fr) 1.8fr;
   flex: 1;
   overflow: hidden;
 }
@@ -157,6 +156,7 @@ header p {
   align-items: center;
   padding: 1rem 1.5rem;
   border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
 }
 .panel-header h2 {
     border: none;
@@ -253,10 +253,13 @@ header p {
     background: var(--primary);
 }
 
-.output-panel .panel-content {
-    padding: 0;
+.output-assistant-panel .panel-content {
     position: relative;
 }
+.output-assistant-panel.assistant-active .panel-content {
+    padding: 0;
+}
+
 .empty-output {
     display: flex;
     justify-content: center;
@@ -487,6 +490,19 @@ video {
 .mermaid-content svg {
     max-width: 100%;
     height: auto;
+}
+
+/* Tab Styles */
+.panel-tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    padding: 0 1rem;
+    flex-shrink: 0;
+}
+.panel-tabs .tab-button {
+    border-radius: 0;
+    border: none;
+    border-bottom: 3px solid transparent;
 }
 
 /* Editor Styles */
@@ -807,10 +823,6 @@ video {
 }
 
 /* Assistant Panel */
-.assistant-panel .panel-content {
-    padding: 0;
-}
-
 .chatbot-container {
     display: flex;
     flex-direction: column;
@@ -961,4 +973,29 @@ video {
     width: 44px;
     height: 44px;
     padding: 0;
+}
+
+/* Responsive Layout */
+@media (max-width: 1200px) {
+    .container {
+        grid-template-columns: minmax(400px, 1fr) 1.5fr;
+    }
+}
+
+@media (max-width: 900px) {
+    .container {
+        grid-template-columns: 1fr;
+        overflow-y: auto;
+    }
+    .panel {
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+        height: auto;
+    }
+    .panel:last-child {
+        border-bottom: none;
+    }
+    .panel-content {
+        max-height: 70vh;
+    }
 }
