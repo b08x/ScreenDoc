@@ -202,6 +202,13 @@ export default function App() {
   const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
   const [isBotReplying, setIsBotReplying] = useState(false);
 
+  const makeProgressUpdater = (startPercent: number, endPercent: number) => {
+    return (taskProgress: number) => { // taskProgress is 0-100
+        const overallProgress = startPercent + (taskProgress / 100) * (endPercent - startPercent);
+        setProgress(overallProgress);
+    };
+  };
+
   const resetState = () => {
     setVideoFile(null);
     setVideoUrl('');
@@ -250,37 +257,37 @@ export default function App() {
     setError('');
 
     try {
-      setLoadingMessage('Reading video file...');
-      const base64Data = await fileToBase64(pendingFile, setProgress);
+      setLoadingMessage('Reading video file (1/4)...');
+      const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 30));
       setVideoBase64(base64Data);
       setVideoMimeType(pendingFile.type);
 
-      setLoadingMessage('Analyzing audio...');
-      await simulateShortProgress(setProgress);
+      setLoadingMessage('Analyzing audio (2/4)...');
+      await simulateShortProgress(makeProgressUpdater(30, 40));
 
-      setLoadingMessage('Generating speaker diarization...');
-      const transcriptionPromise = transcribeVideo({ 
-          videoBase64: base64Data, 
+      setLoadingMessage('Generating speaker diarization (3/4)...');
+      const transcriptionPromise = transcribeVideo({
+          videoBase64: base64Data,
           mimeType: pendingFile.type,
           description: videoDescription,
           userPrompt: userPrompt,
       });
-      const transcribedText = await simulateProgress(transcriptionPromise, setProgress);
+      const transcribedText = await simulateProgress(transcriptionPromise, makeProgressUpdater(40, 70));
       if (transcribedText.length > 0) {
         setDiarizedTranscript(transcribedText);
       } else {
         setError(prev => prev ? `${prev}\nTranscription failed; providing an empty editor.` : 'Transcription failed; providing an empty editor.');
         setDiarizedTranscript([{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
       }
-      
-      setLoadingMessage('Creating captions...');
-      const captionsPromise = generateTimecodedCaptions({ 
-          videoBase64: base64Data, 
+
+      setLoadingMessage('Creating captions (4/4)...');
+      const captionsPromise = generateTimecodedCaptions({
+          videoBase64: base64Data,
           mimeType: pendingFile.type,
           description: videoDescription,
           userPrompt: userPrompt,
       });
-      const captions = await simulateProgress(captionsPromise, setProgress);
+      const captions = await simulateProgress(captionsPromise, makeProgressUpdater(70, 100));
       if (captions?.length > 0) {
         setTimecodedCaptions(captions);
       } else {
