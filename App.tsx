@@ -420,7 +420,7 @@ export default function App() {
       try {
           const zip = new JSZip();
           let updatedContent = generatedContent;
-          const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
+          const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*)\s+at\s+([0-9:.]+)]/gi)];
   
           if (imagePlaceholders.length > 0) {
               const imagesFolder = zip.folder("images");
@@ -526,7 +526,7 @@ export default function App() {
               let finalContent = generatedContent;
 
               if (videoUrl && outputFormat !== 'diagram') {
-                  const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
+                  const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*)\s+at\s+([0-9:.]+)]/gi)];
                   if (imagePlaceholders.length > 0) {
                       const imagesFolder = zip.folder("images");
                       if (!imagesFolder) throw new Error("Could not create images folder.");
