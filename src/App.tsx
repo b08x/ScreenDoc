@@ -489,7 +489,11 @@ export default function App() {
                       updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
                   }
               } finally {
-                  document.body.removeChild(video); // Clean up the video element
+                  // Release video resources to prevent memory leaks
+                  video.pause();
+                  video.removeAttribute('src');
+                  video.load();
+                  document.body.removeChild(video); // Clean up the video element from DOM
               }
           }
   
@@ -628,7 +632,11 @@ export default function App() {
                               finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
                           }
                       } finally {
-                          document.body.removeChild(video);
+                          // Release video resources to prevent memory leaks
+                          video.pause();
+                          video.removeAttribute('src');
+                          video.load();
+                          document.body.removeChild(video); // Clean up the video element from DOM
                       }
                   }
               }
