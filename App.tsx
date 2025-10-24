@@ -410,61 +410,51 @@ export default function App() {
   };
 
   const handleExportZip = async () => {
-    if (!generatedContent || !videoUrl) return;
+      if (!generatedContent || !videoUrl || outputFormat === 'diagram') return;
 
-    setIsZipping(true);
-    setError('');
+      setIsZipping(true);
+      setError('');
 
-    try {
-        const zip = new JSZip();
-        const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
-        
-        if (imagePlaceholders.length === 0) {
-            const fileExtension = outputFormat === 'diagram' ? 'mmd' : 'md';
-            zip.file(`output.${fileExtension}`, generatedContent);
-        } else {
-            let updatedContent = generatedContent;
-            const imagePromises: Promise<{ blob: Blob; index: number }>[] = [];
-            
-            imagePlaceholders.forEach((match, index) => {
-                const timecode = match[2];
-                const seconds = timeToSecs(timecode);
-                const promise = extractFrame(videoUrl, seconds).then(blob => ({ blob, index }));
-                imagePromises.push(promise);
-            });
+      try {
+          const zip = new JSZip();
+          let updatedContent = generatedContent;
+          const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
 
-            const imageResults = await Promise.all(imagePromises);
+          if (imagePlaceholders.length > 0) {
+              const imagesFolder = zip.folder("images");
+              if (!imagesFolder) throw new Error("Could not create images folder in zip.");
 
-            for (const result of imageResults) {
-                const { blob, index } = result;
-                const match = imagePlaceholders[index];
-                const imageName = `image-${index + 1}.png`;
-                zip.file(`images/${imageName}`, blob);
-                
-                const placeholder = match[0];
-                const description = match[1];
-                updatedContent = updatedContent.replace(placeholder, `![${description}](./images/${imageName})`);
-            }
-            
-            zip.file(`guide.md`, updatedContent);
-        }
+              const imagePromises = imagePlaceholders.map((match, index) => {
+                  const timecode = match[2];
+                  const seconds = timeToSecs(timecode);
+                  return extractFrame(videoUrl, seconds).then(blob => ({ blob, match, index }));
+              });
 
-        const zipBlob = await zip.generateAsync({type: 'blob'});
+              const imageResults = await Promise.all(imagePromises);
 
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(zipBlob);
-        a.download = 'ScreenGuide-Export.zip';
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(a.href);
+              for (const { blob, match, index } of imageResults) {
+                  if (blob) {
+                      const imageName = `image-${index + 1}.png`;
+                      imagesFolder.file(imageName, blob);
+                      
+                      const placeholder = match[0];
+                      const description = match[1];
+                      updatedContent = updatedContent.replace(placeholder, `![${description}](./images/${imageName})`);
+                  }
+              }
+          }
 
-    } catch (e) {
-        console.error("Error creating zip file:", e);
-        setError("Failed to create zip file. Could not extract frames from video.");
-    } finally {
-        setIsZipping(false);
-    }
+          zip.file('guide.md', updatedContent);
+
+          const zipBlob = await zip.generateAsync({type: 'blob'});
+          downloadFile('ScreenGuide-Export.zip', zipBlob, 'application/zip');
+
+      } catch (e) {
+          console.error("Error creating zip file:", e);
+          setError("Failed to create zip file. Could not extract frames from video.");
+      } finally {
+          setIsZipping(false);
+      }
   };
 
   const handleExportPdf = () => {
@@ -492,7 +482,7 @@ export default function App() {
       try {
           const zip = new JSZip();
 
-          // 1. Session metadata (preserves original generated content)
+          // 1. Session metadata
           const sessionData = {
               userContext: {
                   videoDescription: videoDescription,
@@ -513,21 +503,23 @@ export default function App() {
 
           // 2. Original video file
           if (videoFile) {
-              zip.folder("video")!.file(videoFile.name, videoFile);
+              const videoFolder = zip.folder("video");
+              if (videoFolder) videoFolder.file(videoFile.name, videoFile);
           }
 
           // 3. Generated output file and all associated image files.
           if (generatedContent) {
               const fileExtension = outputFormat === 'diagram' ? 'mmd' : 'md';
-              const outputFolder = zip.folder("output")!;
+              const outputFolder = zip.folder("output");
+              if (!outputFolder) throw new Error("Could not create output folder.");
+              
               let finalContent = generatedContent;
 
-              // For non-diagram formats, find image placeholders, extract frames,
-              // save them, and update the markdown to link to them.
               if (videoUrl && outputFormat !== 'diagram') {
                   const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
                   if (imagePlaceholders.length > 0) {
-                      const imagesFolder = zip.folder("images")!;
+                      const imagesFolder = zip.folder("images");
+                      if (!imagesFolder) throw new Error("Could not create images folder.");
                       
                       const imagePromises = imagePlaceholders.map((match, index) => {
                           const timecode = match[2];
@@ -544,24 +536,24 @@ export default function App() {
                               
                               const placeholder = match[0];
                               const description = match[1];
-                              // The output file is in `output/` and images are in `images/`. Relative path is `../images/`.
                               finalContent = finalContent.replace(placeholder, `![${description}](../images/${imageName})`);
                           }
                       }
                   }
               }
-              // Save the final content (either original or with updated image links)
               outputFolder.file(`output.${fileExtension}`, finalContent);
           }
           
           // 4. Subtitle files
           if (diarizedTranscript.length > 0 || timecodedCaptions.length > 0) {
-              const subtitlesFolder = zip.folder("subtitles")!;
-              const assContent = exportToAss(diarizedTranscript, timecodedCaptions);
-              subtitlesFolder.file('transcript.ass', assContent);
-              
-              const jsonContent = exportToJson(diarizedTranscript, timecodedCaptions);
-              subtitlesFolder.file('transcript.json', jsonContent);
+              const subtitlesFolder = zip.folder("subtitles");
+              if (subtitlesFolder) {
+                  const assContent = exportToAss(diarizedTranscript, timecodedCaptions);
+                  subtitlesFolder.file('transcript.ass', assContent);
+                  
+                  const jsonContent = exportToJson(diarizedTranscript, timecodedCaptions);
+                  subtitlesFolder.file('transcript.json', jsonContent);
+              }
           }
 
           // Generate and download zip
