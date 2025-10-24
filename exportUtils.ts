@@ -81,8 +81,8 @@ export const exportToJson = (transcript: DiarizedSegment[], captions: Caption[])
     }, null, 2);
 };
 
-export const downloadFile = (filename: string, content: string, mimeType: string) => {
-    const blob = new Blob([content], { type: mimeType });
+export const downloadFile = (filename: string, content: string | Blob, mimeType: string) => {
+    const blob = typeof content === 'string' ? new Blob([content], { type: mimeType }) : content;
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;

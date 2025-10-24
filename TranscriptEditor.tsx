@@ -31,16 +31,45 @@ interface TranscriptEditorProps {
 export default function TranscriptEditor({ transcript, captions, onTranscriptChange, onCaptionsChange }: TranscriptEditorProps) {
     const [activeTab, setActiveTab] = useState<'transcript' | 'captions'>('transcript');
 
-    const handleTranscriptSegmentChange = (index: number, field: 'speaker' | 'text', value: string) => {
+    const handleTranscriptSegmentChange = (index: number, field: keyof DiarizedSegment, value: string) => {
         const newTranscript = [...transcript];
         newTranscript[index] = { ...newTranscript[index], [field]: value };
         onTranscriptChange(newTranscript);
     };
     
-    const handleCaptionChange = (index: number, value: string) => {
+    const handleCaptionChange = (index: number, field: keyof Caption, value: string) => {
         const newCaptions = [...captions];
-        newCaptions[index] = { ...newCaptions[index], text: value };
+        newCaptions[index] = { ...newCaptions[index], [field]: value };
         onCaptionsChange(newCaptions);
+    };
+
+    const handleAddTranscriptSegment = () => {
+        const lastSegment = transcript[transcript.length - 1];
+        const newSegment: DiarizedSegment = {
+            speaker: lastSegment?.speaker || 'Speaker 1',
+            startTime: lastSegment?.endTime || '00:00:00.000',
+            endTime: lastSegment?.endTime || '00:00:00.000',
+            text: '',
+        };
+        onTranscriptChange([...transcript, newSegment]);
+    };
+
+    const handleRemoveTranscriptSegment = (index: number) => {
+        onTranscriptChange(transcript.filter((_, i) => i !== index));
+    };
+
+    const handleAddCaption = () => {
+        const lastCaption = captions[captions.length - 1];
+        const newCaption: Caption = {
+            startTime: lastCaption?.endTime || '00:00:00.000',
+            endTime: lastCaption?.endTime || '00:00:00.000',
+            text: '',
+        };
+        onCaptionsChange([...captions, newCaption]);
+    };
+
+    const handleRemoveCaption = (index: number) => {
+        onCaptionsChange(captions.filter((_, i) => i !== index));
     };
 
     const handleExport = (format: 'ass' | 'json') => {
@@ -61,6 +90,8 @@ export default function TranscriptEditor({ transcript, captions, onTranscriptCha
                     <button className={c({active: activeTab === 'captions'})} onClick={() => setActiveTab('captions')}>A/V Captions</button>
                 </div>
                 <div className="actions">
+                    {activeTab === 'transcript' && <button onClick={handleAddTranscriptSegment}><span className="icon">add</span> Add Segment</button>}
+                    {activeTab === 'captions' && <button onClick={handleAddCaption}><span className="icon">add</span> Add Caption</button>}
                     <button onClick={() => handleExport('json')}><span className="icon">code</span> Export as .json</button>
                     <button onClick={() => handleExport('ass')}><span className="icon">subtitles</span> Export as .ass</button>
                 </div>
@@ -70,7 +101,11 @@ export default function TranscriptEditor({ transcript, captions, onTranscriptCha
                     <div className="segment-list">
                         {transcript.map((segment, index) => (
                             <div key={index} className="transcript-segment">
-                                <div className="timecodes">{segment.startTime} - {segment.endTime}</div>
+                                <div className="timecode-inputs">
+                                    <input type="text" value={segment.startTime} onChange={(e) => handleTranscriptSegmentChange(index, 'startTime', e.target.value)} aria-label={`Start time for segment ${index + 1}`} />
+                                    <span>-</span>
+                                    <input type="text" value={segment.endTime} onChange={(e) => handleTranscriptSegmentChange(index, 'endTime', e.target.value)} aria-label={`End time for segment ${index + 1}`} />
+                                </div>
                                 <input 
                                     className="speaker-input"
                                     type="text" 
@@ -85,6 +120,9 @@ export default function TranscriptEditor({ transcript, captions, onTranscriptCha
                                     rows={2}
                                     aria-label={`Text for segment ${index + 1}`}
                                 />
+                                <button className="remove-button" onClick={() => handleRemoveTranscriptSegment(index)} aria-label={`Remove segment ${index + 1}`}>
+                                    <span className="icon">delete</span>
+                                </button>
                             </div>
                         ))}
                     </div>
@@ -93,14 +131,21 @@ export default function TranscriptEditor({ transcript, captions, onTranscriptCha
                      <div className="segment-list">
                         {captions.map((caption, index) => (
                             <div key={index} className="caption-segment">
-                                <div className="timecodes">{caption.startTime} - {caption.endTime}</div>
+                                <div className="timecode-inputs">
+                                    <input type="text" value={caption.startTime} onChange={(e) => handleCaptionChange(index, 'startTime', e.target.value)} aria-label={`Start time for caption ${index + 1}`} />
+                                    <span>-</span>
+                                    <input type="text" value={caption.endTime} onChange={(e) => handleCaptionChange(index, 'endTime', e.target.value)} aria-label={`End time for caption ${index + 1}`} />
+                                </div>
                                 <textarea 
-                                    className="text-input full-width"
+                                    className="text-input"
                                     value={caption.text}
-                                    onChange={(e) => handleCaptionChange(index, e.target.value)}
+                                    onChange={(e) => handleCaptionChange(index, 'text', e.target.value)}
                                     rows={2}
                                     aria-label={`Caption text ${index + 1}`}
                                 />
+                                <button className="remove-button" onClick={() => handleRemoveCaption(index)} aria-label={`Remove caption ${index + 1}`}>
+                                    <span className="icon">delete</span>
+                                </button>
                             </div>
                         ))}
                     </div>

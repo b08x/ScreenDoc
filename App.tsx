@@ -18,15 +18,17 @@
 // limitations under the License.
 
 import c from 'classnames';
-import {useRef, useState} from 'react';
+// FIX: Import the 'React' namespace to resolve the 'Cannot find namespace React' error for types like React.DragEvent.
+import React, {useRef, useState} from 'react';
 import JSZip from 'jszip';
 import {timeToSecs} from './utils';
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, DiarizedSegment, Caption} from './api';
-import { markdownToRtf } from './exportUtils';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, getChatResponse, DiarizedSegment, Caption} from './api';
+import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './exportUtils';
 import VideoPlayer from './VideoPlayer.jsx';
 import MarkdownEditor from './MarkdownEditor';
 import TranscriptEditor from './TranscriptEditor';
 import ContextModal from './ContextModal';
+import Chatbot from './Chatbot';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -195,6 +197,11 @@ export default function App() {
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
 
+  // Chatbot state
+  const [chatMessages, setChatMessages] = useState<{id: number, sender: 'user' | 'bot', text: string}[]>([]);
+  const [selectedContext, setSelectedContext] = useState<{id: number, text: string}[]>([]);
+  const [isBotReplying, setIsBotReplying] = useState(false);
+
   const resetState = () => {
     setVideoFile(null);
     setVideoUrl('');
@@ -213,6 +220,8 @@ export default function App() {
     setLoadingMessage('');
     setProgress(0);
     setPendingFile(null);
+    setChatMessages([]);
+    setSelectedContext([]);
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -257,7 +266,12 @@ export default function App() {
           userPrompt: userPrompt,
       });
       const transcribedText = await simulateProgress(transcriptionPromise, setProgress);
-      setDiarizedTranscript(transcribedText);
+      if (transcribedText.length > 0) {
+        setDiarizedTranscript(transcribedText);
+      } else {
+        setError(prev => prev ? `${prev}\nTranscription failed; providing an empty editor.` : 'Transcription failed; providing an empty editor.');
+        setDiarizedTranscript([{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+      }
       
       setLoadingMessage('Creating captions...');
       const captionsPromise = generateTimecodedCaptions({ 
@@ -267,7 +281,12 @@ export default function App() {
           userPrompt: userPrompt,
       });
       const captions = await simulateProgress(captionsPromise, setProgress);
-      setTimecodedCaptions(captions || []);
+      if (captions?.length > 0) {
+        setTimecodedCaptions(captions);
+      } else {
+        setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
+        setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+      }
 
     } catch (e) {
       console.error(e);
@@ -295,6 +314,7 @@ export default function App() {
 
     try {
       const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
+      const contextString = selectedContext.map(c => c.text).join('\n\n');
       const generationPromise = generateGuide({
         videoBase64,
         mimeType: videoMimeType,
@@ -302,6 +322,7 @@ export default function App() {
         description: videoDescription,
         prompt: userPrompt,
         format: outputFormat,
+        context: contextString,
       });
       const content = await simulateProgress(generationPromise, setProgress);
       setGeneratedContent(content);
@@ -456,32 +477,135 @@ export default function App() {
       URL.revokeObjectURL(url);
   };
 
-  const handleExportSessionData = () => {
-      const sessionData = {
-          userContext: {
-              videoDescription: videoDescription,
-              userPrompt: userPrompt,
-          },
-          rawData: {
-              diarizedTranscript: diarizedTranscript,
-              timecodedCaptions: timecodedCaptions,
-          },
-          generatedOutput: {
-              format: outputFormat,
-              content: generatedContent,
-          },
-          timestamp: new Date().toISOString(),
-      };
-      const jsonContent = JSON.stringify(sessionData, null, 2);
-      const blob = new Blob([jsonContent], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'ScreenGuide-Session.json';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+  const handleExportSessionData = async () => {
+      if (isZipping) return;
+      setIsZipping(true);
+      setError('');
+
+      try {
+          const zip = new JSZip();
+
+          // 1. Session metadata
+          const sessionData = {
+              userContext: {
+                  videoDescription: videoDescription,
+                  userPrompt: userPrompt,
+              },
+              rawData: {
+                  diarizedTranscript: diarizedTranscript,
+                  timecodedCaptions: timecodedCaptions,
+              },
+              generatedOutput: {
+                  format: outputFormat,
+                  content: generatedContent,
+              },
+              chatHistory: chatMessages,
+              timestamp: new Date().toISOString(),
+          };
+          zip.file("session.json", JSON.stringify(sessionData, null, 2));
+
+          // 2. Original video file
+          if (videoFile) {
+              zip.folder("video")!.file(videoFile.name, videoFile);
+          }
+
+          // 3. Generated output file
+          if (generatedContent) {
+              const fileExtension = outputFormat === 'diagram' ? 'mmd' : 'md';
+              zip.folder("output")!.file(`output.${fileExtension}`, generatedContent);
+          }
+          
+          // 4. Subtitle files
+          if (diarizedTranscript.length > 0 || timecodedCaptions.length > 0) {
+              const subtitlesFolder = zip.folder("subtitles")!;
+              const assContent = exportToAss(diarizedTranscript, timecodedCaptions);
+              subtitlesFolder.file('transcript.ass', assContent);
+              
+              const jsonContent = exportToJson(diarizedTranscript, timecodedCaptions);
+              subtitlesFolder.file('transcript.json', jsonContent);
+          }
+
+          // 5. Image files from generated content
+          if (generatedContent && videoUrl) {
+              const imagePlaceholders = [...generatedContent.matchAll(/\[Image: (.*?)\s+at\s+([0-9:.]+)]/g)];
+              if (imagePlaceholders.length > 0) {
+                  const imagesFolder = zip.folder("images")!;
+                  const imagePromises = imagePlaceholders.map((match) => {
+                      const timecode = match[2];
+                      const seconds = timeToSecs(timecode);
+                      return extractFrame(videoUrl, seconds);
+                  });
+                  
+                  const imageBlobs = await Promise.all(imagePromises);
+                  
+                  imageBlobs.forEach((blob, index) => {
+                      if (blob) {
+                          imagesFolder.file(`image-${index + 1}.png`, blob);
+                      }
+                  });
+              }
+          }
+
+          // Generate and download zip
+          const zipBlob = await zip.generateAsync({ type: 'blob' });
+          downloadFile('ScreenGuide-Session.zip', zipBlob, 'application/zip');
+
+      } catch (e) {
+          console.error("Error creating session zip file:", e);
+          setError("Failed to create session zip file. Some assets may be missing.");
+      } finally {
+          setIsZipping(false);
+      }
+  };
+
+  const handleAddContext = (message: {id: number, text: string}) => {
+      if (!selectedContext.some(ctx => ctx.id === message.id)) {
+          setSelectedContext(prev => [...prev, {id: message.id, text: message.text}]);
+      }
+  };
+  
+  const handleRemoveContext = (messageId: number) => {
+      setSelectedContext(prev => prev.filter(ctx => ctx.id !== messageId));
+  };
+
+  const handleSendMessage = async (message: string) => {
+      setIsBotReplying(true);
+      const newUserMessage = { id: Date.now(), sender: 'user' as const, text: message };
+      const newMessages = [...chatMessages, newUserMessage];
+      setChatMessages(newMessages);
+
+      const history = newMessages.slice(0, -1).map(msg => ({
+          role: msg.sender === 'user' ? ('user' as const) : ('model' as const),
+          parts: [{ text: msg.text }],
+      }));
+
+      try {
+          const responseText = await getChatResponse(
+              history,
+              message,
+              generatedContent,
+          );
+          
+          const markdownBlockRegex = /```markdown\n([\s\S]*?)\n```/;
+          const match = responseText.match(markdownBlockRegex);
+
+          let botResponseText = responseText;
+          if (match && match[1]) {
+              const updatedDraft = match[1];
+              setGeneratedContent(updatedDraft);
+              botResponseText = responseText.replace(markdownBlockRegex, '').trim() || "I've updated the draft for you.";
+          }
+
+          const newBotMessage = { id: Date.now() + 1, sender: 'bot' as const, text: botResponseText };
+          setChatMessages(prev => [...prev, newBotMessage]);
+
+      } catch(e) {
+          console.error(e);
+          const errorBotMessage = { id: Date.now() + 1, sender: 'bot' as const, text: "Sorry, I encountered an error. Please try again." };
+          setChatMessages(prev => [...prev, errorBotMessage]);
+      } finally {
+          setIsBotReplying(false);
+      }
   };
 
 
@@ -615,11 +739,11 @@ export default function App() {
                 {outputFormat !== 'diagram' && (
                     <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
                 )}
-                <button onClick={handleExportSessionData}><span className="icon">dataset</span> Export Session</button>
+                <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
               </div>
             )}
           </div>
-          <div className="panel-content output-content">
+          <div className="panel-content">
             {isProcessingVideo && (
               <div className="loading">
                 <div className="spinner"></div>
@@ -654,6 +778,24 @@ export default function App() {
               />
             )}
           </div>
+        </section>
+
+        {/* ASSISTANT PANEL */}
+        <section className="panel assistant-panel">
+            <div className="panel-header">
+                <h2>AI Assistant</h2>
+            </div>
+            <div className="panel-content">
+              <Chatbot
+                  messages={chatMessages}
+                  selectedContext={selectedContext}
+                  isBotReplying={isBotReplying}
+                  generatedContentExists={!!generatedContent}
+                  onSendMessage={handleSendMessage}
+                  onAddContext={handleAddContext}
+                  onRemoveContext={handleRemoveContext}
+              />
+            </div>
         </section>
       </div>
       <ContextModal

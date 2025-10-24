@@ -4,7 +4,7 @@
 */
 /* tslint:disable */
 
-import {GoogleGenAI, FunctionDeclaration, Type} from '@google/genai';
+import {GoogleGenAI, FunctionDeclaration, Type, Content} from '@google/genai';
 
 const ai = new GoogleGenAI({apiKey: process.env.API_KEY});
 
@@ -163,7 +163,7 @@ async function generateTimecodedCaptions({ videoBase64, mimeType, description, u
 }
 
 
-async function generateGuide({videoBase64, mimeType, transcript, description, prompt, format}: { videoBase64: string; mimeType: string; transcript: string; description: string; prompt: string; format: string; }) {
+async function generateGuide({videoBase64, mimeType, transcript, description, prompt, format, context}: { videoBase64: string; mimeType: string; transcript: string; description: string; prompt: string; format: string; context?: string; }) {
   const model = 'gemini-2.5-pro';
   let formatInstruction: string;
 
@@ -197,6 +197,10 @@ Audio Transcription (user-reviewed):
 ${transcript}
 
 ---
+Additional Context from AI Assistant Chat:
+${context || 'Not provided.'}
+
+---
 Desired Output Format:
 ${formatInstruction}
 
@@ -227,6 +231,35 @@ Please generate the final content. For Markdown, use standard syntax. For diagra
   });
 
   return response.text;
+}
+
+export const getChatResponse = async (
+    history: Content[],
+    latestMessage: string,
+    currentDraft?: string | null,
+) => {
+    let systemInstruction;
+    let userMessage = latestMessage;
+
+    if (currentDraft) {
+        systemInstruction = `You are an AI assistant helping a user edit a technical document.
+If the user's request seems like an edit instruction (e.g., "change the title", "add a step", "rephrase this part"), you MUST respond with the full, updated document content inside a single \`\`\`markdown code block. You can add a short confirmation message before the code block, like "Of course, here is the updated version:".
+If the request is clearly a question and not an edit, provide a conversational answer.`;
+        userMessage = `${latestMessage}\n\n(For context, here is the current document draft:\n---\n${currentDraft}\n---)`;
+    } else {
+        systemInstruction = `You are a helpful AI assistant called ScreenGuide AI. You can answer questions related to the user's video and documentation.`;
+    }
+
+    const chat = ai.chats.create({
+        model: 'gemini-2.5-flash',
+        history,
+        config: {
+            systemInstruction
+        }
+    });
+
+    const response = await chat.sendMessage({ message: userMessage });
+    return response.text;
 }
 
 export {transcribeVideo, generateGuide, generateTimecodedCaptions};

@@ -17,7 +17,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {useEffect, useRef, useState} from 'react';
+// FIX: Import the 'React' namespace to resolve the 'Cannot find namespace React' error for types like React.MouseEvent.
+import React, {useEffect, useRef, useState} from 'react';
 import {timeToSecs} from './utils';
 import { Caption } from './api';
 
