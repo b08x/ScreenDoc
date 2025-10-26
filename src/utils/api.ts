@@ -250,4 +250,57 @@ ${textToRewrite}
     }
 }
 
-export {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText};
+async function generateSummary({
+    videoBase64,
+    mimeType,
+    transcript,
+    description,
+}: {
+    videoBase64: string;
+    mimeType: string;
+    transcript: string;
+    description: string;
+}): Promise<string> {
+    const model = 'gemini-2.5-flash';
+    const fullPrompt = `You are an expert technical writer. Generate a concise, one-paragraph summary of the screen recording provided.
+Use the video, audio transcription, and high-level description to understand its content and purpose.
+The summary should capture the main topic and key takeaways of the video. Keep it to 2-4 sentences.
+
+---
+Video Description:
+${description || 'Not provided.'}
+
+---
+Audio Transcription:
+${transcript || 'Not provided.'}
+---
+
+Generate only the summary paragraph.`;
+
+    try {
+        const response = await ai.models.generateContent({
+            model: model,
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        { text: fullPrompt },
+                        {
+                            inlineData: {
+                                mimeType: mimeType,
+                                data: videoBase64,
+                            },
+                        },
+                    ],
+                },
+            ],
+        });
+        return response.text.trim();
+    } catch (e) {
+        console.error('Error generating summary:', e);
+        throw new Error('Failed to generate summary.');
+    }
+}
+
+
+export {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary};

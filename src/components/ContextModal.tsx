@@ -26,6 +26,8 @@ interface ContextModalProps {
     setDescription: (value: string) => void;
     prompt: string;
     setPrompt: (value: string) => void;
+    skipAudio: boolean;
+    setSkipAudio: (value: boolean) => void;
 }
 
 const PROMPT_EXAMPLES = [
@@ -34,7 +36,7 @@ const PROMPT_EXAMPLES = [
   'List all the keyboard shortcuts used.',
 ];
 
-export default function ContextModal({ isOpen, onClose, onSubmit, description, setDescription, prompt, setPrompt }: ContextModalProps) {
+export default function ContextModal({ isOpen, onClose, onSubmit, description, setDescription, prompt, setPrompt, skipAudio, setSkipAudio }: ContextModalProps) {
     if (!isOpen) return null;
 
     return (
@@ -70,6 +72,17 @@ export default function ContextModal({ isOpen, onClose, onSubmit, description, s
                             </button>
                             ))}
                         </div>
+                    </div>
+                    <div className="skip-audio-checkbox">
+                        <input
+                            id="skip-audio-processing"
+                            type="checkbox"
+                            checked={skipAudio}
+                            onChange={(e) => setSkipAudio(e.target.checked)}
+                        />
+                        <label htmlFor="skip-audio-processing">
+                            Skip audio transcription (visual captions only)
+                        </label>
                     </div>
                 </div>
                 <div className="modal-footer">

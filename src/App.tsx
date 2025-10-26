@@ -6,7 +6,7 @@
 // Copyright 2024 Google LLC
 
 // Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
+// you not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 
 //     https://www.apache.org/licenses/LICENSE-2.0
@@ -27,7 +27,7 @@ import rehypeMermaid from 'rehype-mermaid';
 
 import {timeToSecs} from './utils/utils';
 // FIX: Import the `rewriteText` function to resolve the 'Cannot find name' error.
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText} from './utils/api';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './utils/api';
 import {DiarizedSegment, Caption} from './types';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './utils/exportUtils';
 import VideoPlayer from './components/VideoPlayer';
@@ -115,9 +115,60 @@ const simulateShortProgress = (onProgress: (percent: number) => void): Promise<v
     });
 };
 
+// Helper function to extract a frame from a video at a specific time
+const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.style.display = 'none';
+    video.muted = true;
+    video.crossOrigin = 'anonymous';
+
+    const onSeeked = () => {
+      video.removeEventListener('seeked', onSeeked);
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob((blob) => {
+          document.body.removeChild(video);
+          if (blob) {
+            resolve(blob);
+          } else {
+            reject(new Error('Canvas to Blob conversion failed.'));
+          }
+        }, 'image/png');
+      } else {
+        document.body.removeChild(video);
+        reject(new Error('Could not get canvas context.'));
+      }
+    };
+
+    const onLoadedMetadata = () => {
+      video.removeEventListener('loadedmetadata', onLoadedMetadata);
+      // Clamp time to be within video duration
+      video.currentTime = Math.max(0, Math.min(time, video.duration));
+    };
+
+    video.addEventListener('loadedmetadata', onLoadedMetadata);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('error', (e) => {
+        document.body.removeChild(video);
+        reject(new Error(`Video loading error: ${video.error?.message || 'unknown error'}`));
+    });
+
+    video.src = videoUrl;
+    document.body.appendChild(video);
+    // video.load() is not needed and can cause issues; setting src is enough.
+  });
+};
+
+
 export default function App() {
-  const [theme] = useState(
-    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
+  const [theme, setTheme] = useState(
+    () => localStorage.getItem('screenguide-theme') || 
+    (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   );
 
   // App state
@@ -137,17 +188,20 @@ export default function App() {
   const [userPrompt, setUserPrompt] = useState('');
   const [outputFormat, setOutputFormat] = useState('guide');
   const [generatedContent, setGeneratedContent] = useState('');
+  const [videoSummary, setVideoSummary] = useState('');
 
   // Loading states
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [progress, setProgress] = useState(0);
 
   // Modal and pending file state
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [skipAudioProcessing, setSkipAudioProcessing] = useState(false);
 
   // Retry state
   const [captioningFailed, setCaptioningFailed] = useState(false);
@@ -167,6 +221,14 @@ export default function App() {
       theme: theme === 'dark' ? 'dark' : 'default',
     });
   }, [theme]);
+  
+  useEffect(() => {
+    localStorage.setItem('screenguide-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+      setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+  };
 
   const makeProgressUpdater = (startPercent: number, endPercent: number) => {
     return (taskProgress: number) => { // taskProgress is 0-100
@@ -187,14 +249,17 @@ export default function App() {
     setUserPrompt('');
     setOutputFormat('guide');
     setGeneratedContent('');
+    setVideoSummary('');
     setIsProcessingVideo(false);
     setIsGenerating(false);
     setIsZipping(false);
+    setIsSummarizing(false);
     setLoadingMessage('');
     setProgress(0);
     setPendingFile(null);
     setCaptioningFailed(false);
     setIsRetryingCaptions(false);
+    setSkipAudioProcessing(false);
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -224,45 +289,72 @@ export default function App() {
     setCaptioningFailed(false);
 
     try {
-      setLoadingMessage('Reading video file (1/4)...');
-      const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 30));
-      setVideoBase64(base64Data);
-      setVideoMimeType(pendingFile.type);
+      if (skipAudioProcessing) {
+        // ---- Visual captions only flow ----
+        setLoadingMessage('Reading video file (1/2)...');
+        const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 50));
+        setVideoBase64(base64Data);
+        setVideoMimeType(pendingFile.type);
 
-      setLoadingMessage('Analyzing audio (2/4)...');
-      await simulateShortProgress(makeProgressUpdater(30, 40));
+        // Skip transcription and set an empty array
+        setDiarizedTranscript([]);
 
-      setLoadingMessage('Generating speaker diarization (3/4)...');
-      const transcriptionPromise = transcribeVideo({
-          videoBase64: base64Data,
-          mimeType: pendingFile.type,
-          description: videoDescription,
-          userPrompt: userPrompt,
-      });
-      const transcribedText = await simulateProgress(transcriptionPromise, makeProgressUpdater(40, 70));
-      if (transcribedText.length > 0) {
-        setDiarizedTranscript(transcribedText);
+        setLoadingMessage('Creating captions (2/2)...');
+        const captionsPromise = generateTimecodedCaptions({
+            videoBase64: base64Data,
+            mimeType: pendingFile.type,
+            description: videoDescription,
+            userPrompt: userPrompt,
+        });
+        const captions = await simulateProgress(captionsPromise, makeProgressUpdater(50, 100));
+        if (captions?.length > 0) {
+          setTimecodedCaptions(captions);
+        } else {
+          setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
+          setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+          setCaptioningFailed(true);
+        }
       } else {
-        setError(prev => prev ? `${prev}\nTranscription failed; providing an empty editor.` : 'Transcription failed; providing an empty editor.');
-        setDiarizedTranscript([{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+        // ---- Full processing flow (existing) ----
+        setLoadingMessage('Reading video file (1/4)...');
+        const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 30));
+        setVideoBase64(base64Data);
+        setVideoMimeType(pendingFile.type);
+  
+        setLoadingMessage('Analyzing audio (2/4)...');
+        await simulateShortProgress(makeProgressUpdater(30, 40));
+  
+        setLoadingMessage('Generating speaker diarization (3/4)...');
+        const transcriptionPromise = transcribeVideo({
+            videoBase64: base64Data,
+            mimeType: pendingFile.type,
+            description: videoDescription,
+            userPrompt: userPrompt,
+        });
+        const transcribedText = await simulateProgress(transcriptionPromise, makeProgressUpdater(40, 70));
+        if (transcribedText.length > 0) {
+          setDiarizedTranscript(transcribedText);
+        } else {
+          setError(prev => prev ? `${prev}\nTranscription failed; providing an empty editor.` : 'Transcription failed; providing an empty editor.');
+          setDiarizedTranscript([{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+        }
+  
+        setLoadingMessage('Creating captions (4/4)...');
+        const captionsPromise = generateTimecodedCaptions({
+            videoBase64: base64Data,
+            mimeType: pendingFile.type,
+            description: videoDescription,
+            userPrompt: userPrompt,
+        });
+        const captions = await simulateProgress(captionsPromise, makeProgressUpdater(70, 100));
+        if (captions?.length > 0) {
+          setTimecodedCaptions(captions);
+        } else {
+          setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
+          setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+          setCaptioningFailed(true);
+        }
       }
-
-      setLoadingMessage('Creating captions (4/4)...');
-      const captionsPromise = generateTimecodedCaptions({
-          videoBase64: base64Data,
-          mimeType: pendingFile.type,
-          description: videoDescription,
-          userPrompt: userPrompt,
-      });
-      const captions = await simulateProgress(captionsPromise, makeProgressUpdater(70, 100));
-      if (captions?.length > 0) {
-        setTimecodedCaptions(captions);
-      } else {
-        setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
-        setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
-        setCaptioningFailed(true);
-      }
-
     } catch (e) {
       console.error(e);
       setError('An error occurred during processing. Please try again.');
@@ -313,9 +405,39 @@ export default function App() {
       }
   };
 
+  const handleGenerateSummary = async () => {
+    if (!videoBase64) {
+      setError('A video must be processed first to generate a summary.');
+      return;
+    }
+    setIsSummarizing(true);
+    setError('');
+    setVideoSummary('');
+
+    try {
+      const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
+      const summary = await generateSummary({
+        videoBase64,
+        mimeType: videoMimeType,
+        transcript: transcriptString,
+        description: videoDescription,
+      });
+      setVideoSummary(summary);
+    } catch (e) {
+      console.error(e);
+      setError('Failed to generate summary. Please try again.');
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
   const handleGenerate = async () => {
-    if (!videoBase64 || diarizedTranscript.length === 0) {
-      setError('Missing video or transcript.');
+    if (!videoBase64) {
+      setError('Missing video.');
+      return;
+    }
+    if (diarizedTranscript.length === 0 && !skipAudioProcessing) {
+      setError('Missing transcript. Process a video first or use the "visual captions only" option.');
       return;
     }
     setIsGenerating(true);
@@ -428,76 +550,38 @@ export default function App() {
               const imagesFolder = zip.folder("images");
               if (!imagesFolder) throw new Error("Could not create images folder in zip.");
   
-              const replacements = [];
-              const video = document.createElement('video');
-              video.style.display = 'none'; // Keep it hidden
-              document.body.appendChild(video); // Append to DOM for reliable processing
-  
-              try {
-                  video.muted = true;
-                  video.crossOrigin = 'anonymous';
-                  video.src = videoUrl;
-  
-                  await new Promise<void>((resolve, reject) => {
-                      video.addEventListener('loadedmetadata', () => resolve(), { once: true });
-                      video.addEventListener('error', (err) => reject(new Error('Video load error for export.')), { once: true });
-                  });
-  
-                  for (const [index, match] of imagePlaceholders.entries()) {
-                      const placeholder = match[0];
-                      const description = match[1];
-                      const timecode = match[2];
-                      
-                      if (timecode) {
-                          try {
-                              const seconds = timeToSecs(timecode);
-                              const blob = await new Promise<Blob>((resolve, reject) => {
-                                  const onSeeked = () => {
-                                      const canvas = document.createElement('canvas');
-                                      canvas.width = video.videoWidth;
-                                      canvas.height = video.videoHeight;
-                                      const ctx = canvas.getContext('2d');
-                                      if (!ctx) return reject(new Error('Canvas context failed.'));
-                                      
-                                      // Use requestAnimationFrame to ensure the frame has been painted
-                                      requestAnimationFrame(() => {
-                                        try {
-                                          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                          canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas to blob failed.')), 'image/png');
-                                        } catch (drawError) {
-                                          reject(drawError);
-                                        }
-                                      });
-                                  };
-                                  video.addEventListener('seeked', onSeeked, { once: true });
-                                  video.currentTime = Math.max(0, Math.min(seconds, video.duration));
-                              });
-                              
-                              if (blob) {
-                                  const imageName = `image-${index + 1}.png`;
-                                  imagesFolder.file(imageName, blob);
-                                  const replacementText = `![${description}](./images/${imageName})`;
-                                  replacements.push({ placeholder, replacementText });
-                              }
-                          } catch (e) {
-                              console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+              const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
+                  const placeholder = match[0];
+                  const description = match[1];
+                  const timecode = match[2];
+                  
+                  if (timecode) {
+                      try {
+                          const seconds = timeToSecs(timecode);
+                          const blob = await extractFrame(videoUrl, seconds);
+                          if (blob) {
+                              const imageName = `image-${index + 1}.png`;
+                              imagesFolder.file(imageName, blob);
+                              const replacementText = `![${description}](./images/${imageName})`;
+                              return { placeholder, replacementText };
                           }
+                      } catch (e) {
+                          console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
                       }
                   }
+                  return null; // Return null if extraction fails or no timecode
+              }));
+
+              const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
   
-                  for (const rep of replacements) {
-                      updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
-                  }
-              } finally {
-                  // Release video resources to prevent memory leaks
-                  video.pause();
-                  video.removeAttribute('src');
-                  video.load();
-                  document.body.removeChild(video); // Clean up the video element from DOM
+              // Sequentially replace placeholders to handle duplicates correctly
+              for (const rep of validReplacements) {
+                  updatedContent = updatedContent.replace(rep.placeholder, rep.replacementText);
               }
           }
   
           zip.file('guide.md', updatedContent);
+  
           const zipBlob = await zip.generateAsync({type: 'blob'});
           downloadFile('ScreenGuide-Export.zip', zipBlob, 'application/zip');
   
@@ -572,71 +656,32 @@ export default function App() {
                       const imagesFolder = zip.folder("images");
                       if (!imagesFolder) throw new Error("Could not create images folder.");
                       
-                      const replacements = [];
-                      const video = document.createElement('video');
-                      video.style.display = 'none';
-                      document.body.appendChild(video);
-
-                      try {
-                          video.muted = true;
-                          video.crossOrigin = 'anonymous';
-                          video.src = videoUrl;
-    
-                          await new Promise<void>((resolve, reject) => {
-                              video.addEventListener('loadedmetadata', () => resolve(), { once: true });
-                              video.addEventListener('error', () => reject(new Error('Video load error for export.')), { once: true });
-                          });
-    
-                          for (const [index, match] of imagePlaceholders.entries()) {
-                              const placeholder = match[0];
-                              const description = match[1];
-                              const timecode = match[2];
-                              
-                              if (timecode) {
-                                try {
-                                    const seconds = timeToSecs(timecode);
-                                    const blob = await new Promise<Blob>((resolve, reject) => {
-                                        const onSeeked = () => {
-                                            const canvas = document.createElement('canvas');
-                                            canvas.width = video.videoWidth;
-                                            canvas.height = video.videoHeight;
-                                            const ctx = canvas.getContext('2d');
-                                            if (!ctx) return reject(new Error('Canvas context failed.'));
-
-                                            requestAnimationFrame(() => {
-                                              try {
-                                                ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                                                canvas.toBlob(b => b ? resolve(b) : reject(new Error('Canvas to blob failed.')));
-                                              } catch (drawError) {
-                                                reject(drawError);
-                                              }
-                                            });
-                                        };
-                                        video.addEventListener('seeked', onSeeked, { once: true });
-                                        video.currentTime = Math.max(0, Math.min(seconds, video.duration));
-                                    });
-                                    
-                                    if (blob) {
-                                        const imageName = `image-${index + 1}.png`;
-                                        imagesFolder.file(imageName, blob);
-                                        const replacementText = `![${description}](../images/${imageName})`;
-                                        replacements.push({ placeholder, replacementText });
-                                    }
-                                } catch (e) {
-                                    console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
-                                }
-                              }
-                          }
+                      const replacements = await Promise.all(imagePlaceholders.map(async (match, index) => {
+                          const placeholder = match[0];
+                          const description = match[1];
+                          const timecode = match[2];
                           
-                          for (const rep of replacements) {
-                              finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
+                          if (timecode) {
+                            try {
+                                const seconds = timeToSecs(timecode);
+                                const blob = await extractFrame(videoUrl, seconds);
+                                if (blob) {
+                                    const imageName = `image-${index + 1}.png`;
+                                    imagesFolder.file(imageName, blob);
+                                    const replacementText = `![${description}](../images/${imageName})`;
+                                    return { placeholder, replacementText };
+                                }
+                            } catch (e) {
+                                console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+                            }
                           }
-                      } finally {
-                          // Release video resources to prevent memory leaks
-                          video.pause();
-                          video.removeAttribute('src');
-                          video.load();
-                          document.body.removeChild(video); // Clean up the video element from DOM
+                          return null;
+                      }));
+
+                      const validReplacements = replacements.filter((r): r is { placeholder: string; replacementText: string; } => r !== null);
+                      
+                      for (const rep of validReplacements) {
+                          finalContent = finalContent.replace(rep.placeholder, rep.replacementText);
                       }
                   }
               }
@@ -737,8 +782,13 @@ export default function App() {
       onDragOver={(e) => e.preventDefault()}
     >
       <header>
-        <h1>ScreenGuide AI</h1>
-        <p>Transform Screen Recordings into Technical Documentation</p>
+        <div className="header-content">
+          <h1>ScreenGuide AI</h1>
+          <p>Transform Screen Recordings into Technical Documentation</p>
+        </div>
+        <button onClick={toggleTheme} className="theme-toggle" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
+            <span className="icon">{theme === 'light' ? 'dark_mode' : 'light_mode'}</span>
+        </button>
       </header>
       <div className={c('container', {'preview-collapsed': isPreviewCollapsed})}>
         {/* INPUT PANEL */}
@@ -849,29 +899,54 @@ export default function App() {
             <section className="panel editor-panel">
                 <div className="panel-header">
                     <h2>Editor</h2>
-                    {generatedContent && !isLoading && (
                     <div className="output-actions">
-                        <button 
-                            onClick={() => setIsRewriteModalOpen(true)} 
-                            disabled={!selectionRange || isRewriting}
-                        >
-                            <span className="icon">auto_fix_high</span> Edit with AI
-                        </button>
-                        <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
-                        <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
-                        {outputFormat !== 'diagram' && (
-                            <button onClick={handleExportZip} disabled={isZipping}>
-                                <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
+                        {videoBase64 && !isLoading && (
+                            <button onClick={handleGenerateSummary} disabled={isSummarizing}>
+                                <span className="icon">summarize</span> {isSummarizing ? 'Summarizing...' : 'Summarize'}
                             </button>
                         )}
-                        <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
-                        {outputFormat !== 'diagram' && (
-                            <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
+                        {generatedContent && !isLoading && (
+                        <>
+                            <button 
+                                onClick={() => setIsRewriteModalOpen(true)} 
+                                disabled={!selectionRange || isRewriting}
+                            >
+                                <span className="icon">auto_fix_high</span> Edit with AI
+                            </button>
+                            <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
+                            <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
+                            {outputFormat !== 'diagram' && (
+                                <button onClick={handleExportZip} disabled={isZipping}>
+                                    <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
+                                </button>
+                            )}
+                            <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
+                            {outputFormat !== 'diagram' && (
+                                <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
+                            )}
+                            <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
+                        </>
                         )}
-                        <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
                     </div>
-                    )}
                 </div>
+
+                {(isSummarizing || videoSummary) && (
+                    <div className="summary-panel-content">
+                        {isSummarizing && (
+                            <div className="loading-summary">
+                                <div className="spinner-small"></div>
+                                <p>Generating summary...</p>
+                            </div>
+                        )}
+                        {!isSummarizing && videoSummary && (
+                            <>
+                                <h3><span className="icon">auto_awesome</span> AI Summary</h3>
+                                <p>{videoSummary}</p>
+                            </>
+                        )}
+                    </div>
+                )}
+
                 <div className="panel-content">
                     {isLoading && (
                     <div className="loading">
@@ -954,6 +1029,8 @@ export default function App() {
         setDescription={setVideoDescription}
         prompt={userPrompt}
         setPrompt={setUserPrompt}
+        skipAudio={skipAudioProcessing}
+        setSkipAudio={setSkipAudioProcessing}
       />
       <RewriteModal
         isOpen={isRewriteModalOpen}
