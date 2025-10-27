@@ -20,7 +20,6 @@
 import c from 'classnames';
 import React, {useRef, useState, useEffect} from 'react';
 import JSZip from 'jszip';
-import mermaid from 'mermaid';
 
 import {timeToSecs} from './utils/utils';
 import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './api';
@@ -91,14 +90,6 @@ export default function App() {
   const [rewritePrompt, setRewritePrompt] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
 
-
-  useEffect(() => {
-    mermaid.initialize({
-      startOnLoad: false,
-      theme: theme === 'dark' ? 'dark' : 'default',
-    });
-  }, [theme]);
-  
   useEffect(() => {
     localStorage.setItem('screenguide-theme', theme);
   }, [theme]);
