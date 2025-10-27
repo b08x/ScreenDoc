@@ -23,13 +23,11 @@ import {line} from 'd3-shape';
 import {useEffect, useRef, useState} from 'react';
 import {timeToSecs} from '../utils/utils';
 
-// FIX: Define an interface for the chart data points for type safety.
 interface ChartDataPoint {
   time: string;
   value: number | string;
 }
 
-// FIX: Add types for component props.
 export default function Chart({
   data,
   yLabel,
@@ -39,37 +37,31 @@ export default function Chart({
   yLabel: string;
   jumpToTimecode: (seconds: number) => void;
 }) {
-  // FIX: Provide a specific element type to useRef for type safety.
   const chartRef = useRef<SVGSVGElement>(null);
   const [width, setWidth] = useState(1);
   const [height, setHeight] = useState(1);
   const margin = 55;
   const xMax = width;
   const yMax = height - margin;
-  // FIX: Add generic type to scaleBand for type safety.
   const xScale = scaleBand<string>()
     .range([margin + 10, xMax])
     .domain(data.map((d) => d.time))
     .padding(0.2);
 
-  // FIX: Coerce data values to numbers for use in linear scale.
   const vals = data.map((d) => +d.value);
   const yScale = scaleLinear()
-    // FIX: Handle cases where min/max might be undefined (e.g., empty data array).
     .domain([min(vals) ?? 0, max(vals) ?? 1])
     .nice()
     .range([yMax, margin]);
 
   const yTicks = yScale.ticks(Math.floor(height / 70));
 
-  // FIX: Specify the data type for the line generator to fix property access errors.
   const lineGen = line<ChartDataPoint>()
     .x((d) => xScale(d.time)!)
     .y((d) => yScale(+d.value));
 
   useEffect(() => {
     const setSize = () => {
-      // FIX: Add a null check before accessing the ref's current property.
       if (chartRef.current) {
         setWidth(chartRef.current.clientWidth);
         setHeight(chartRef.current.clientHeight);

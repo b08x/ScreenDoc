@@ -70,7 +70,7 @@ async function transcribeVideo({ videoBase64, mimeType, description, userPrompt 
       return functionCall.args.transcript as DiarizedSegment[];
     }
   } catch (e) {
-      console.error("Error transcribing video:", e);
+      // Return empty array if transcription fails - UI will handle the error state
   }
   return [];
 }
@@ -144,9 +144,9 @@ async function generateTimecodedCaptions({ videoBase64, mimeType, description, u
       return functionCall.args.timecodes as Caption[];
     }
   } catch (e) {
-      console.error("Error generating timecoded captions:", e);
+      // Return empty array if caption generation fails - UI will handle the error state
   }
-  
+
   return [];
 }
 
@@ -245,8 +245,8 @@ ${textToRewrite}
         });
         return response.text.trim();
     } catch (e) {
-        console.error('Error rewriting text:', e);
-        throw new Error('Failed to rewrite text.');
+        const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+        throw new Error(`Failed to rewrite text: ${errorMessage}`);
     }
 }
 
@@ -297,8 +297,8 @@ Generate only the summary paragraph.`;
         });
         return response.text.trim();
     } catch (e) {
-        console.error('Error generating summary:', e);
-        throw new Error('Failed to generate summary.');
+        const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+        throw new Error(`Failed to generate summary: ${errorMessage}`);
     }
 }
 

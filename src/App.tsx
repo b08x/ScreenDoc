@@ -18,7 +18,6 @@
 // limitations under the License.
 
 import c from 'classnames';
-// FIX: Import the 'React' namespace to resolve the 'Cannot find namespace React' error for types like React.DragEvent.
 import React, {useRef, useState, useEffect} from 'react';
 import JSZip from 'jszip';
 import mermaid from 'mermaid';
@@ -26,10 +25,10 @@ import MarkdownPreview from '@uiw/react-markdown-preview';
 import rehypeMermaid from 'rehype-mermaid';
 
 import {timeToSecs} from './utils/utils';
-// FIX: Import the `rewriteText` function to resolve the 'Cannot find name' error.
 import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './api';
 import {DiarizedSegment, Caption} from './types';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './utils/exportUtils';
+import { fileToBase64, simulateProgress, simulateShortProgress, extractFrame } from './utils/fileUtils';
 import VideoPlayer from './components/VideoPlayer';
 import TranscriptEditor from './components/TranscriptEditor';
 import ContextModal from './components/ContextModal';
@@ -43,127 +42,6 @@ const PROMPT_EXAMPLES = [
 ];
 const MAX_FILE_SIZE_MB = 500;
 const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
-
-// Helper to convert File object to base64 string
-const fileToBase64 = (file: File, onProgress: (percent: number) => void): Promise<string> => new Promise((resolve, reject) => {
-  const reader = new FileReader();
-  reader.readAsDataURL(file);
-  reader.onprogress = (event) => {
-    if (event.lengthComputable) {
-      const percentLoaded = (event.loaded / event.total) * 100;
-      onProgress(percentLoaded);
-    }
-  };
-  reader.onload = () => {
-    onProgress(100);
-    // result is "data:video/webm;base64,..."
-    // we need to strip the prefix
-    resolve((reader.result as string).split(',')[1]);
-  };
-  reader.onerror = reject;
-});
-
-// FIX: Changed arrow function with generic to a standard function declaration to avoid JSX parsing ambiguity.
-// This resolves errors related to 'T', 'let', 'progress', 'interval', 'onProgress', and call expression errors for simulateProgress.
-function simulateProgress<T>(
-  task: Promise<T>,
-  onProgress: (percent: number) => void,
-): Promise<T> {
-  let progress = 0;
-  onProgress(progress);
-
-  const interval = setInterval(() => {
-    progress += Math.random() * 5;
-    if (progress >= 95) {
-      clearInterval(interval);
-      // Don't go to 100, wait for the promise to resolve
-      onProgress(95);
-    } else {
-      onProgress(progress);
-    }
-  }, 200);
-
-  return task
-    .then(result => {
-      clearInterval(interval);
-      onProgress(100);
-      return result;
-    })
-    .catch(error => {
-      clearInterval(interval);
-      onProgress(0);
-      throw error;
-    });
-}
-
-// Helper for short, cosmetic loading steps to improve UX feedback
-const simulateShortProgress = (onProgress: (percent: number) => void): Promise<void> => {
-    return new Promise(resolve => {
-        let progress = 0;
-        onProgress(progress);
-        const interval = setInterval(() => {
-            progress += 15 + Math.random() * 10; // Faster progress
-            if (progress >= 100) {
-                clearInterval(interval);
-                onProgress(100);
-                // A short delay before resolving to ensure 100% is visible
-                setTimeout(resolve, 100);
-            } else {
-                onProgress(progress);
-            }
-        }, 120); // Faster interval
-    });
-};
-
-// Helper function to extract a frame from a video at a specific time
-const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
-  return new Promise((resolve, reject) => {
-    const video = document.createElement('video');
-    video.style.display = 'none';
-    video.muted = true;
-    video.crossOrigin = 'anonymous';
-
-    const onSeeked = () => {
-      video.removeEventListener('seeked', onSeeked);
-      const canvas = document.createElement('canvas');
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-        canvas.toBlob((blob) => {
-          document.body.removeChild(video);
-          if (blob) {
-            resolve(blob);
-          } else {
-            reject(new Error('Canvas to Blob conversion failed.'));
-          }
-        }, 'image/png');
-      } else {
-        document.body.removeChild(video);
-        reject(new Error('Could not get canvas context.'));
-      }
-    };
-
-    const onLoadedMetadata = () => {
-      video.removeEventListener('loadedmetadata', onLoadedMetadata);
-      // Clamp time to be within video duration
-      video.currentTime = Math.max(0, Math.min(time, video.duration));
-    };
-
-    video.addEventListener('loadedmetadata', onLoadedMetadata);
-    video.addEventListener('seeked', onSeeked);
-    video.addEventListener('error', (e) => {
-        document.body.removeChild(video);
-        reject(new Error(`Video loading error: ${video.error?.message || 'unknown error'}`));
-    });
-
-    video.src = videoUrl;
-    document.body.appendChild(video);
-    // video.load() is not needed and can cause issues; setting src is enough.
-  });
-};
-
 
 export default function App() {
   const [theme, setTheme] = useState(
@@ -356,8 +234,8 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.error(e);
-      setError('An error occurred during processing. Please try again.');
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+      setError(`An error occurred during processing: ${errorMessage}. Please try again.`);
     } finally {
       setIsProcessingVideo(false);
       setLoadingMessage('');
@@ -396,10 +274,10 @@ export default function App() {
               setCaptioningFailed(true);
           }
       } catch (e) {
-          console.error("Caption retry error:", e);
-          setError(prev => (prev || '') + '\nFailed to retry caption generation.');
+          const errorMessage = e instanceof Error ? e.message : 'Unknown error';
+          setError(prev => (prev || '') + `\nFailed to retry caption generation: ${errorMessage}`);
           setCaptioningFailed(true);
-      } finally {
+      } finally{
           setIsRetryingCaptions(false);
           setProgress(0);
       }
@@ -424,8 +302,8 @@ export default function App() {
       });
       setVideoSummary(summary);
     } catch (e) {
-      console.error(e);
-      setError('Failed to generate summary. Please try again.');
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+      setError(`Failed to generate summary: ${errorMessage}. Please try again.`);
     } finally {
       setIsSummarizing(false);
     }
@@ -460,8 +338,8 @@ export default function App() {
       const content = await simulateProgress(generationPromise, setProgress);
       setGeneratedContent(content);
     } catch (e) {
-      console.error(e);
-      setError('Failed to generate content. Please try again.');
+      const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+      setError(`Failed to generate content: ${errorMessage}. Please try again.`);
     } finally {
       setIsGenerating(false);
       setLoadingMessage('');
@@ -472,7 +350,6 @@ export default function App() {
   const handleRecord = async (type) => {
     try {
       let stream;
-      // FIX: Removed the incorrect 'DisplayMediaStreamOptions' type annotation to allow non-standard properties.
       const displayMediaOptions = {
         video: true,
         audio: true,
@@ -505,8 +382,8 @@ export default function App() {
       };
       mediaRecorder.current.start();
     } catch (err) {
-      console.error("Error starting recording:", err);
-      setError("Could not start recording. Please ensure permissions are granted.");
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error occurred';
+      setError(`Could not start recording: ${errorMessage}. Please ensure permissions are granted.`);
       setIsRecording(false);
     }
   };
@@ -566,7 +443,7 @@ export default function App() {
                               return { placeholder, replacementText };
                           }
                       } catch (e) {
-                          console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+                          // Silently continue if frame extraction fails for individual placeholders
                       }
                   }
                   return null; // Return null if extraction fails or no timecode
@@ -586,8 +463,8 @@ export default function App() {
           downloadFile('ScreenGuide-Export.zip', zipBlob, 'application/zip');
   
       } catch (e) {
-          console.error("Error creating zip file:", e);
-          setError("Failed to create zip file. Some frames could not be extracted.");
+          const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+          setError(`Failed to create zip file: ${errorMessage}. Some frames could not be extracted.`);
       } finally {
           setIsZipping(false);
       }
@@ -672,7 +549,7 @@ export default function App() {
                                     return { placeholder, replacementText };
                                 }
                             } catch (e) {
-                                console.warn(`Failed to extract frame for placeholder: ${placeholder}`, e);
+                                // Silently continue if frame extraction fails for individual placeholders
                             }
                           }
                           return null;
@@ -705,8 +582,8 @@ export default function App() {
           downloadFile('ScreenGuide-Session.zip', zipBlob, 'application/zip');
 
       } catch (e) {
-          console.error("Error creating session zip file:", e);
-          setError("Failed to create session zip file. Some assets may be missing.");
+          const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+          setError(`Failed to create session zip file: ${errorMessage}. Some assets may be missing.`);
       } finally {
           setIsZipping(false);
       }
@@ -743,8 +620,8 @@ export default function App() {
           setGeneratedContent(newContent);
 
       } catch (e) {
-          console.error(e);
-          setError('Failed to rewrite text. Please try again.');
+          const errorMessage = e instanceof Error ? e.message : 'Unknown error occurred';
+          setError(`Failed to rewrite text: ${errorMessage}. Please try again.`);
       } finally {
           setIsRewriting(false);
           setIsRewriteModalOpen(false);
