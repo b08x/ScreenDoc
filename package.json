@@ -10,21 +10,21 @@
   },
   "dependencies": {
     "@google/genai": "^0.7.0",
+    "@uiw/react-markdown-preview": "5.1.1",
+    "classnames": "^2.5.1",
+    "d3-array": "^3.2.4",
+    "d3-scale": "^4.0.2",
+    "d3-shape": "^3.2.0",
+    "jszip": "3.10.1",
+    "mermaid": "^10.9.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "d3-array": "^3.2.4",
-    "d3-shape": "^3.2.0",
-    "classnames": "^2.5.1",
-    "@google/generative-ai": "^0.24.0",
-    "d3-scale": "^4.0.2",
-    "mermaid": "^10.9.0",
-    "jszip": "3.10.1",
-    "@uiw/react-markdown-preview": "5.1.1",
     "rehype-mermaid": "2.1.0"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
+    "terser": "^5.44.0",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
   }

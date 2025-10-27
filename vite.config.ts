@@ -4,10 +4,15 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
     const env = loadEnv(mode, '.', '');
+    const isDevelopment = mode === 'development';
+
     return {
       server: {
         port: 3000,
         host: '0.0.0.0',
+        hmr: {
+          host: 'localhost'
+        }
       },
       plugins: [react()],
       define: {
@@ -16,8 +21,35 @@ export default defineConfig(({ mode }) => {
       },
       resolve: {
         alias: {
-          '@': path.resolve(__dirname, '.'),
+          '@': path.resolve(__dirname, './src'),
         }
+      },
+      build: {
+        outDir: 'dist',
+        sourcemap: isDevelopment,
+        minify: isDevelopment ? false : 'terser',
+        terserOptions: {
+          compress: {
+            drop_console: true,
+            drop_debugger: true,
+            pure_funcs: ['console.log', 'console.debug']
+          }
+        },
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              'react-vendor': ['react', 'react-dom'],
+              'ai-vendor': ['@google/genai'],
+              'heavy-vendor': ['mermaid', 'jszip'],
+              'markdown-vendor': ['@uiw/react-markdown-preview', 'rehype-mermaid']
+            }
+          }
+        },
+        chunkSizeWarningLimit: 1000
+      },
+      optimizeDeps: {
+        include: ['react', 'react-dom', 'classnames'],
+        exclude: ['mermaid']
       }
     };
 });
