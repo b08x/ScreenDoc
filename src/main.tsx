@@ -16,15 +16,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-export interface Caption {
-  startTime: string; // e.g., "00:01:23.456"
-  endTime: string;
-  text: string;
-}
+import {createRoot} from 'react-dom/client';
+import App from './App';
+import './styles/index.css';
 
-export interface DiarizedSegment {
-  speaker: string;
-  startTime: string; // e.g., "00:01:23.456"
-  endTime: string;
-  text: string;
-}
+createRoot(document.getElementById('root')).render(<App />);

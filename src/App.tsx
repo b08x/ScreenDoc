@@ -6,7 +6,7 @@
 // Copyright 2024 Google LLC
 
 // Licensed under the Apache License, Version 2.0 (the "License");
-// you not use this file except in compliance with the License.
+// you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 
 //     https://www.apache.org/licenses/LICENSE-2.0
@@ -27,7 +27,7 @@ import rehypeMermaid from 'rehype-mermaid';
 
 import {timeToSecs} from './utils/utils';
 // FIX: Import the `rewriteText` function to resolve the 'Cannot find name' error.
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './utils/api';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './api';
 import {DiarizedSegment, Caption} from './types';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './utils/exportUtils';
 import VideoPlayer from './components/VideoPlayer';
