@@ -21,8 +21,6 @@ import c from 'classnames';
 import React, {useRef, useState, useEffect} from 'react';
 import JSZip from 'jszip';
 import mermaid from 'mermaid';
-import MarkdownPreview from '@uiw/react-markdown-preview';
-import rehypeMermaid from 'rehype-mermaid';
 
 import {timeToSecs} from './utils/utils';
 import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './api';
@@ -33,6 +31,7 @@ import VideoPlayer from './components/VideoPlayer';
 import TranscriptEditor from './components/TranscriptEditor';
 import ContextModal from './components/ContextModal';
 import RewriteModal from './components/RewriteModal';
+import StyledMarkdown from './components/StyledMarkdown';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -644,14 +643,6 @@ export default function App() {
   
   const isLoading = isProcessingVideo || isGenerating;
 
-  const processContentForPreview = (content: string) => {
-    if (!content) return '';
-    return content.replace(
-        /\[Image: (.*?)(?:\s+at\s+[0-9:.]+)?\]/gim,
-        '<div class="image-placeholder">🖼️ $1</div>'
-    );
-  };
-
   return (
     <main
       className={theme}
@@ -869,26 +860,17 @@ export default function App() {
                     </div>
                 )}
                 {generatedContent && outputFormat === 'slides' && (
-                    generatedContent.split(/\n---\n/).map((slideContent, index) => (
-                        <div className="slide" key={index}>
-                            <div className="slide-number">{index + 1}</div>
-                            <div className="slide-content">
-                                <MarkdownPreview
-                                    source={processContentForPreview(slideContent.trim())}
-                                    rehypePlugins={[[rehypeMermaid]]}
-                                    wrapperElement={{ "data-color-mode": theme }}
-                                    allowDangerousHtml={true}
-                                />
-                            </div>
-                        </div>
-                    ))
+                    <StyledMarkdown
+                        content={generatedContent}
+                        theme={theme}
+                        isSlides={true}
+                    />
                 )}
                 {generatedContent && outputFormat !== 'slides' && (
-                    <MarkdownPreview
-                        source={processContentForPreview(outputFormat === 'diagram' ? '```mermaid\n' + generatedContent + '\n```' : generatedContent)}
-                        rehypePlugins={[[rehypeMermaid]]}
-                        wrapperElement={{ "data-color-mode": theme }}
-                        allowDangerousHtml={true}
+                    <StyledMarkdown
+                        content={outputFormat === 'diagram' ? '```mermaid\n' + generatedContent + '\n```' : generatedContent}
+                        theme={theme}
+                        isSlides={false}
                     />
                 )}
             </div>

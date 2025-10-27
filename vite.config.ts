@@ -21,7 +21,7 @@ export default defineConfig(({ mode }) => {
       },
       resolve: {
         alias: {
-          '@': path.resolve(__dirname, './src'),
+          '@': path.resolve(__dirname, './src')
         }
       },
       build: {
@@ -41,15 +41,14 @@ export default defineConfig(({ mode }) => {
               'react-vendor': ['react', 'react-dom'],
               'ai-vendor': ['@google/genai'],
               'heavy-vendor': ['mermaid', 'jszip'],
-              'markdown-vendor': ['@uiw/react-markdown-preview', 'rehype-mermaid']
+              'markdown-vendor': ['streamdown']
             }
           }
         },
         chunkSizeWarningLimit: 1000
       },
       optimizeDeps: {
-        include: ['react', 'react-dom', 'classnames'],
-        exclude: ['mermaid']
+        include: ['react', 'react-dom', 'classnames', 'dayjs']
       }
     };
 });
