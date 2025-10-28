@@ -23,7 +23,7 @@ import JSZip from 'jszip';
 
 import {timeToSecs} from './utils/utils';
 import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './api';
-import {DiarizedSegment, Caption} from './types';
+import {DiarizedSegment, Caption, Settings, ApiKeyStatus, ModelDefinition} from './types';
 import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './utils/exportUtils';
 import { fileToBase64, simulateProgress, simulateShortProgress, extractFrame } from './utils/fileUtils';
 import VideoPlayer from './components/VideoPlayer';
@@ -31,6 +31,9 @@ import TranscriptEditor from './components/TranscriptEditor';
 import ContextModal from './components/ContextModal';
 import RewriteModal from './components/RewriteModal';
 import StyledMarkdown from './components/StyledMarkdown';
+import { ProviderSetupPage } from './components/ProviderSetupPage';
+import { INITIAL_SETTINGS, DEFAULT_MODELS, STORAGE_KEYS } from './constants';
+import { fetchAvailableModels } from './services/aiService';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -43,9 +46,33 @@ const MAX_FILE_SIZE_BYTES = MAX_FILE_SIZE_MB * 1024 * 1024;
 
 export default function App() {
   const [theme, setTheme] = useState(
-    () => localStorage.getItem('screenguide-theme') || 
+    () => localStorage.getItem('screenguide-theme') ||
     (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   );
+
+  // AI Provider settings
+  const [settings, setSettings] = useState<Settings>(() => {
+    const stored = localStorage.getItem(STORAGE_KEYS.SETTINGS);
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch {
+        return INITIAL_SETTINGS;
+      }
+    }
+    return INITIAL_SETTINGS;
+  });
+
+  const [apiKeyStatus, setApiKeyStatus] = useState<ApiKeyStatus>('unchecked');
+  const [availableModels, setAvailableModels] = useState<{
+    visionModels: ModelDefinition[];
+    textModels: ModelDefinition[];
+  }>({
+    visionModels: DEFAULT_MODELS[INITIAL_SETTINGS.provider]?.filter(m => m.supportsVision) || [],
+    textModels: DEFAULT_MODELS[INITIAL_SETTINGS.provider]?.filter(m => m.supportsText) || [],
+  });
+
+  const [showSetup, setShowSetup] = useState(false);
 
   // App state
   const [videoFile, setVideoFile] = useState<File | null>(null);
@@ -93,6 +120,30 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('screenguide-theme', theme);
   }, [theme]);
+
+  // Initialize models on mount
+  useEffect(() => {
+    async function initializeModels() {
+      try {
+        const models = await fetchAvailableModels(settings);
+        setAvailableModels(models);
+      } catch (error) {
+        console.error('Failed to initialize models:', error);
+        // Fall back to defaults from constants
+        setAvailableModels({
+          visionModels: DEFAULT_MODELS[settings.provider]?.filter(m => m.supportsVision) || [],
+          textModels: DEFAULT_MODELS[settings.provider]?.filter(m => m.supportsText) || [],
+        });
+      }
+    }
+
+    initializeModels();
+  }, [settings.provider]);
+
+  // Persist settings to localStorage
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEYS.SETTINGS, JSON.stringify(settings));
+  }, [settings]);
 
   const toggleTheme = () => {
       setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
@@ -169,6 +220,7 @@ export default function App() {
 
         setLoadingMessage('Creating captions (2/2)...');
         const captionsPromise = generateTimecodedCaptions({
+            settings,
             videoBase64: base64Data,
             mimeType: pendingFile.type,
             description: videoDescription,
@@ -194,6 +246,7 @@ export default function App() {
   
         setLoadingMessage('Generating speaker diarization (3/4)...');
         const transcriptionPromise = transcribeVideo({
+            settings,
             videoBase64: base64Data,
             mimeType: pendingFile.type,
             description: videoDescription,
@@ -209,6 +262,7 @@ export default function App() {
   
         setLoadingMessage('Creating captions (4/4)...');
         const captionsPromise = generateTimecodedCaptions({
+            settings,
             videoBase64: base64Data,
             mimeType: pendingFile.type,
             description: videoDescription,
@@ -244,6 +298,7 @@ export default function App() {
       
       try {
           const captionsPromise = generateTimecodedCaptions({
+              settings,
               videoBase64,
               mimeType: videoMimeType,
               description: videoDescription,
@@ -285,6 +340,7 @@ export default function App() {
     try {
       const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
       const summary = await generateSummary({
+        settings,
         videoBase64,
         mimeType: videoMimeType,
         transcript: transcriptString,
@@ -318,6 +374,7 @@ export default function App() {
     try {
       const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
       const generationPromise = generateGuide({
+        settings,
         videoBase64,
         mimeType: videoMimeType,
         transcript: transcriptString,
@@ -598,6 +655,7 @@ export default function App() {
 
       try {
           const rewrittenText = await rewriteText({
+              settings,
               textToRewrite: selectedText,
               prompt: rewritePrompt,
           });
@@ -634,6 +692,23 @@ export default function App() {
   
   const isLoading = isProcessingVideo || isGenerating;
 
+  // Show setup page if needed
+  if (showSetup || apiKeyStatus === 'unchecked') {
+    return (
+      <div className={theme}>
+        <ProviderSetupPage
+          settings={settings}
+          setSettings={setSettings}
+          apiKeyStatus={apiKeyStatus}
+          setApiKeyStatus={setApiKeyStatus}
+          availableModels={availableModels}
+          setAvailableModels={setAvailableModels}
+          onComplete={() => setShowSetup(false)}
+        />
+      </div>
+    );
+  }
+
   return (
     <main
       className={theme}
@@ -645,9 +720,14 @@ export default function App() {
           <h1>ScreenGuide AI</h1>
           <p>Transform Screen Recordings into Technical Documentation</p>
         </div>
-        <button onClick={toggleTheme} className="theme-toggle" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button onClick={() => setShowSetup(true)} className="theme-toggle" aria-label="Open provider settings">
+            <span className="icon">settings</span>
+          </button>
+          <button onClick={toggleTheme} className="theme-toggle" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
             <span className="icon">{theme === 'light' ? 'dark_mode' : 'light_mode'}</span>
-        </button>
+          </button>
+        </div>
       </header>
       <div className={c('container', {'preview-collapsed': isPreviewCollapsed})}>
         {/* INPUT PANEL */}

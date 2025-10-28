@@ -16,8 +16,9 @@ export default defineConfig(({ mode }) => {
       },
       plugins: [react()],
       define: {
-        'process.env.API_KEY': JSON.stringify(env.GEMINI_API_KEY),
-        'process.env.GEMINI_API_KEY': JSON.stringify(env.GEMINI_API_KEY)
+        // Only expose OLLAMA_BASE_URL (non-sensitive configuration)
+        // API keys should be provided by users via ProviderSetupPage
+        'process.env.OLLAMA_BASE_URL': JSON.stringify(env.OLLAMA_BASE_URL || 'http://localhost:11434'),
       },
       resolve: {
         alias: {
@@ -39,7 +40,7 @@ export default defineConfig(({ mode }) => {
           output: {
             manualChunks: {
               'react-vendor': ['react', 'react-dom'],
-              'ai-vendor': ['@google/genai'],
+              'ai-vendor': ['ai', '@ai-sdk/google', '@ai-sdk/openai', '@ai-sdk/anthropic', '@ai-sdk/mistral', '@openrouter/ai-sdk-provider', 'ollama-ai-provider-v2'],
               'heavy-vendor': ['mermaid', 'jszip'],
               'markdown-vendor': ['streamdown']
             }

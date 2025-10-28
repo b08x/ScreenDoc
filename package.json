@@ -9,16 +9,24 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@google/genai": "^0.7.0",
+    "@ai-sdk/anthropic": "^2.0.38",
+    "@ai-sdk/google": "^2.0.24",
+    "@ai-sdk/mistral": "^2.0.20",
+    "@ai-sdk/openai": "^2.0.56",
+    "@openrouter/ai-sdk-provider": "^1.2.0",
+    "ai": "^5.0.81",
+    "buffer": "^6.0.3",
     "classnames": "^2.5.1",
     "d3-array": "^3.2.4",
     "d3-scale": "^4.0.2",
     "d3-shape": "^3.2.0",
     "jszip": "3.10.1",
     "mermaid": "^10.9.0",
+    "ollama-ai-provider-v2": "^1.5.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "streamdown": "^1.4.0"
+    "streamdown": "^1.4.0",
+    "zod": "^4.1.12"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

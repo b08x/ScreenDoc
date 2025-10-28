@@ -1,7 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
-*/
+ */
 /* tslint:disable */
 // Copyright 2024 Google LLC
 
@@ -18,9 +18,9 @@
 // limitations under the License.
 
 // FIX: Import the 'React' namespace to resolve the 'Cannot find namespace React' error for types like React.MouseEvent.
-import React, {useEffect, useRef, useState} from 'react';
-import {timeToSecs} from './utils';
-import { Caption } from './api';
+import React, { useEffect, useRef, useState } from "react";
+import { timeToSecs } from "./utils";
+import { Caption } from "./api";
 
 export default function VideoPlayer({
   url,
@@ -32,7 +32,7 @@ export default function VideoPlayer({
   const videoRef = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
-  const [currentCaption, setCurrentCaption] = useState('');
+  const [currentCaption, setCurrentCaption] = useState("");
 
   useEffect(() => {
     const video = videoRef.current;
@@ -43,20 +43,20 @@ export default function VideoPlayer({
         const current = [...captions]
           .reverse()
           .find((c) => video.currentTime >= timeToSecs(c.startTime));
-        setCurrentCaption(current ? current.text : '');
+        setCurrentCaption(current ? current.text : "");
       };
 
       const handleLoadedMetadata = () => {
         setDuration(video.duration);
       };
 
-      video.addEventListener('timeupdate', handleTimeUpdate);
-      video.addEventListener('loadedmetadata', handleLoadedMetadata);
+      video.addEventListener("timeupdate", handleTimeUpdate);
+      video.addEventListener("loadedmetadata", handleLoadedMetadata);
       video.load();
 
       return () => {
-        video.removeEventListener('timeupdate', handleTimeUpdate);
-        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener("timeupdate", handleTimeUpdate);
+        video.removeEventListener("loadedmetadata", handleLoadedMetadata);
       };
     }
   }, [url, captions]);
@@ -69,7 +69,8 @@ export default function VideoPlayer({
     const video = videoRef.current;
     if (video && duration > 0) {
       const progressBar = e.currentTarget;
-      const clickPosition = e.clientX - progressBar.getBoundingClientRect().left;
+      const clickPosition =
+        e.clientX - progressBar.getBoundingClientRect().left;
       const percentage = clickPosition / progressBar.offsetWidth;
       video.currentTime = duration * percentage;
     }
@@ -104,7 +105,8 @@ export default function VideoPlayer({
           <div className="custom-timeline" onClick={handleSeek}>
             <div
               className="progress"
-              style={{width: `${(currentTime / duration) * 100}%`}}></div>
+              style={{ width: `${(currentTime / duration) * 100}%` }}
+            ></div>
             {captions.map((caption, index) => {
               const seconds = timeToSecs(caption.startTime);
               const position = (seconds / duration) * 100;
@@ -113,11 +115,12 @@ export default function VideoPlayer({
                 <div
                   key={index}
                   className="timeline-marker"
-                  style={{left: `${position}%`}}
+                  style={{ left: `${position}%` }}
                   onClick={(e) => {
                     e.stopPropagation();
                     jumpToTimecode(seconds);
-                  }}>
+                  }}
+                >
                   <div className="tooltip">{caption.text}</div>
                 </div>
               );

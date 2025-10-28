@@ -28,3 +28,45 @@ export interface DiarizedSegment {
   endTime: string;
   text: string;
 }
+
+/**
+ * AI Provider types derived from PROVIDERS constant
+ */
+import type { PROVIDERS } from '../constants';
+export type Provider = keyof typeof PROVIDERS;
+
+/**
+ * Application settings for AI provider configuration
+ */
+export interface Settings {
+  provider: Provider;
+  apiKey: string;
+  baseURL?: string;
+  visionModelId: string;
+  textModelId: string;
+  fetchModelsOnLoad: boolean;
+}
+
+/**
+ * Model definition with capability flags
+ */
+export interface ModelDefinition {
+  id: string;
+  name: string;
+  supportsVision: boolean;
+  supportsText: boolean;
+}
+
+/**
+ * Stored model data with metadata
+ */
+export interface StoredModelData {
+  provider: Provider;
+  models: ModelDefinition[];
+  lastFetched: string; // ISO 8601 timestamp
+}
+
+/**
+ * API key validation status
+ */
+export type ApiKeyStatus = 'unchecked' | 'valid' | 'invalid' | 'checking';
