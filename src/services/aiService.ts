@@ -8,6 +8,7 @@ import type { Settings, ModelDefinition, ApiKeyStatus } from "../types";
 import { PROVIDERS, DEFAULT_MODELS } from "../constants";
 import { getEnvApiKey, getEnvBaseUrl } from "../utils/env";
 import { saveModels, loadModels, areModelsFresh } from "../utils/modelStore";
+import { getNativeGoogleModel } from "./providers/google-native";
 
 /**
  * Type definition for OpenRouter model API response
@@ -92,16 +93,19 @@ export async function validateApiKey(
   settings: Settings,
 ): Promise<ApiKeyStatus> {
   try {
-    // Use text model for validation (simpler/cheaper)
-    const model = await getLanguageModel(settings, settings.textModelId);
-
-    // Attempt a minimal generation to verify the API key works
-    await generateText({
-      model,
-      prompt: 'Say "OK"',
-      maxRetries: 1,
-    });
-
+    if (settings.provider === 'google') {
+        // Native Google validation
+        const model = getNativeGoogleModel(settings);
+        await model.countTokens('ok'); // Lightweight check
+    } else {
+        // Vercel AI SDK validation for other providers
+        const model = await getLanguageModel(settings, settings.textModelId);
+        await generateText({
+            model,
+            prompt: 'Say "OK"',
+            maxRetries: 1,
+        });
+    }
     return "valid";
   } catch (error) {
     console.error("API key validation failed:", error);

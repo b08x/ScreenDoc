@@ -11,6 +11,13 @@ import type { LanguageModel } from "ai";
 import { Buffer } from "buffer";
 import { DiarizedSegment, Caption, Settings } from "../types";
 import { getLanguageModel } from "../services/aiService";
+import {
+    nativeTranscribeVideo,
+    nativeGenerateTimecodedCaptions,
+    nativeGenerateGuide,
+    nativeRewriteText,
+    nativeGenerateSummary
+} from "../services/providers/google-native";
 
 const setDiarizedTranscriptTool = tool({
   description:
@@ -46,6 +53,10 @@ async function transcribeVideo({
   description,
   userPrompt,
 }: TranscriptionParams): Promise<DiarizedSegment[]> {
+    if (settings.provider === 'google') {
+        return nativeTranscribeVideo(settings, videoBase64, mimeType, description, userPrompt);
+    }
+
   let prompt = `Generate a verbatim text transcription of the audio in this video.
 - Identify each speaker and label them consistently (e.g., "Speaker 1", "Speaker 2").
 - Provide precise start and end timecodes for each spoken segment in HH:MM:SS.sss format.
@@ -129,6 +140,10 @@ async function generateTimecodedCaptions({
   description,
   userPrompt,
 }: CaptionParams): Promise<Caption[]> {
+    if (settings.provider === 'google') {
+        return nativeGenerateTimecodedCaptions(settings, videoBase64, mimeType, description, userPrompt);
+    }
+
   let prompt = `For each scene or significant event in this video, generate a caption describing the visual action and any spoken text (in quotes). Provide a precise start and end timecode for each caption in HH:MM:SS.sss format. Use the set_timecodes function to format the output.`;
 
   if (description) {
@@ -195,6 +210,10 @@ async function generateGuide({
   prompt: string;
   format: string;
 }) {
+    if (settings.provider === 'google') {
+        return nativeGenerateGuide(settings, videoBase64, mimeType, transcript, description, prompt, format);
+    }
+
   let formatInstruction: string;
 
   switch (format) {
@@ -272,6 +291,10 @@ async function rewriteText({
   textToRewrite: string;
   prompt: string;
 }): Promise<string> {
+    if (settings.provider === 'google') {
+        return nativeRewriteText(settings, textToRewrite, prompt);
+    }
+
   const fullPrompt = `You are an expert technical writer. Rewrite the following text based on the user's instructions.
 Only return the rewritten text, without any preamble, explanation, or markdown formatting.
 
@@ -314,6 +337,10 @@ async function generateSummary({
   transcript: string;
   description: string;
 }): Promise<string> {
+    if (settings.provider === 'google') {
+        return nativeGenerateSummary(settings, videoBase64, mimeType, transcript, description);
+    }
+
   const fullPrompt = `You are an expert technical writer. Generate a concise, one-paragraph summary of the screen recording provided.
 Use the video, audio transcription, and high-level description to understand its content and purpose.
 The summary should capture the main topic and key takeaways of the video. Keep it to 2-4 sentences.
