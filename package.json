@@ -1,30 +1,19 @@
 {
-  "name": "screenguide-ai",
+  "name": "screenguide-ai-fullstack",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "workspaces": [
+    "src/client",
+    "src/server"
+  ],
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@google/genai": "^0.7.0",
-    "classnames": "^2.5.1",
-    "d3-array": "^3.2.4",
-    "d3-scale": "^4.0.2",
-    "d3-shape": "^3.2.0",
-    "jszip": "3.10.1",
-    "mermaid": "^10.9.0",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "streamdown": "^1.4.0"
+    "dev:client": "npm run dev --workspace=src/client",
+    "dev:server": "npm run dev --workspace=src/server",
+    "dev": "concurrently \"npm:dev:client\" \"npm:dev:server\"",
+    "build": "npm run build --workspace=src/server && npm run build --workspace=src/client",
+    "start": "npm start --workspace=src/server",
+    "postinstall": "npm install --workspace=src/client && npm install --workspace=src/server"
   },
   "devDependencies": {
-    "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "terser": "^5.44.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "concurrently": "^8.2.2"
   }
 }

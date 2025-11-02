@@ -17,79 +17,68 @@
 // limitations under the License.
 
 import React from 'react';
-import { Streamdown } from 'streamdown';
 
-interface StyledMarkdownProps {
-  content: string;
-  theme?: string;
-  isSlides?: boolean;
-  parseIncomplete?: boolean;
-}
-
-// Custom component to handle image placeholders
-const ImagePlaceholder = ({ children }: { children?: React.ReactNode }) => (
-  <div className="image-placeholder">🖼️ {children}</div>
-);
-
-function StyledMarkdown({
-  content,
-  theme = 'light',
-  isSlides = false,
-  parseIncomplete = true
-}: StyledMarkdownProps) {
-
-  // Process content to replace image placeholders
-  const processContent = (text: string) => {
+// A simple markdown to HTML converter component
+function StyledMarkdown({content}: {content: string}) {
+  const convertMarkdownToHTML = (text: string) => {
     if (!text) return '';
-    // Replace [Image: description at timestamp] with markdown that uses custom component
-    return text.replace(
-      /\[Image: (.*?)(?:\s+at\s+[0-9:.]+)?\]/gim,
-      '![Image Placeholder]($1)'
-    );
+
+    const processChunk = (chunk: string) => {
+        let html = chunk
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#039;');
+
+        // Headers
+        html = html.replace(/^### (.*$)/gim, '<h3>$1</h3>');
+        html = html.replace(/^## (.*$)/gim, '<h2>$1</h2>');
+        html = html.replace(/^# (.*$)/gim, '<h1>$1</h1>');
+        // Bold
+        html = html.replace(/\*\*(.*?)\*\*/gim, '<strong>$1</strong>');
+        // Italic
+        html = html.replace(/\*(.*?)\*/gim, '<em>$1</em>');
+        // Lists
+        html = html.replace(/^\s*[-*] (.*)/gim, '<li>$1</li>');
+        html = html.replace(/<li>/g, '<ul><li>');
+        html = html.replace(/<\/li>\n<ul>/g, '</li><li>');
+        html = html.replace(/<\/li>\n((?!<li>).)/g, '</li></ul>\n$1');
+        html = html.replace(/<\/li>$/, '</li></ul>');
+        // Numbered Lists
+        html = html.replace(/^\s*\d+\. (.*)/gim, '<li>$1</li>');
+        html = html.replace(/<li>/g, '<ol><li>');
+        html = html.replace(/<\/li>\n<ol>/g, '</li><li>');
+        html = html.replace(/<\/li>\n((?!<li>).)/g, '</li></ul>\n$1');
+        html = html.replace(/<\/li>$/, '</li></ul>');
+        // Image placeholders
+        html = html.replace(
+            /\[Image: (.*?)(?:\s+at\s+[0-9:.]+)?\]/gim,
+            '<div class="image-placeholder">🖼️ $1</div>',
+        );
+        // Newlines
+        html = html.replace(/\n/g, '<br />');
+        return html;
+    };
+    
+    // Check if the content is meant to be slides
+    if (/\n---\n/.test(text)) {
+        const slides = text.split(/\n---\n/);
+        return slides.map((slideContent, index) => {
+            const slideHtml = processChunk(slideContent.trim());
+            return `<div class="slide"><div class="slide-number">${index + 1}</div><div class="slide-content">${slideHtml}</div></div>`;
+        }).join('');
+    }
+
+    // Otherwise, process as a single block of content
+    return processChunk(text);
   };
 
-  // Check if content should be rendered as slides
-  if (isSlides && /\n---\n/.test(content)) {
-    const slides = content.split(/\n---\n/);
-    return (
-      <>
-        {slides.map((slideContent, index) => (
-          <div className="slide" key={index}>
-            <div className="slide-number">{index + 1}</div>
-            <div className="slide-content">
-              <Streamdown
-                parseIncompleteMarkdown={parseIncomplete}
-                components={{
-                  img: ImagePlaceholder
-                }}
-                mermaidConfig={{
-                  theme: theme === 'dark' ? 'dark' : 'default'
-                }}
-              >
-                {processContent(slideContent.trim())}
-              </Streamdown>
-            </div>
-          </div>
-        ))}
-      </>
-    );
-  }
-
-  // Regular markdown rendering
   return (
-    <div className="markdown-content">
-      <Streamdown
-        parseIncompleteMarkdown={parseIncomplete}
-        components={{
-          img: ImagePlaceholder
-        }}
-        mermaidConfig={{
-          theme: theme === 'dark' ? 'dark' : 'default'
-        }}
-      >
-        {processContent(content)}
-      </Streamdown>
-    </div>
+    <div
+      className="markdown-content"
+      dangerouslySetInnerHTML={{__html: convertMarkdownToHTML(content)}}
+    />
   );
 }
 

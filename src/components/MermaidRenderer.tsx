@@ -34,11 +34,13 @@ function MermaidRenderer({ content, theme }: { content: string, theme: string })
         setError('');
         containerRef.current.innerHTML = ''; // Clear previous render
         try {
+          // FIX: The `mermaid.render` function is now async. This change updates the code to use the modern `async/await` syntax instead of the deprecated callback, which was causing a type error where a function was being passed instead of an `Element`.
           const {svg} = await mermaid.render('mermaid-graph', content);
           if (containerRef.current) {
             containerRef.current.innerHTML = svg;
           }
         } catch (e) {
+          console.error("Mermaid rendering error:", e);
           setError("Could not render the diagram. The generated syntax might be invalid.");
         }
       }
