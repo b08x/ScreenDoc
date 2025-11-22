@@ -285,8 +285,8 @@ export default function App() {
       if (transcribedText.length > 0) {
         setDiarizedTranscript(transcribedText);
       } else {
-        setError(prev => prev ? `${prev}\nTranscription failed; providing an empty editor.` : 'Transcription failed; providing an empty editor.');
-        setDiarizedTranscript([{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+        // No speech detected. Do NOT show an error, just leave transcript empty.
+        setDiarizedTranscript([]);
       }
 
       setLoadingMessage('Creating captions (4/4)...');
@@ -317,10 +317,15 @@ export default function App() {
 
 
   const handleGenerate = async () => {
-    if (!videoBase64 || diarizedTranscript.length === 0) {
-      setError('Missing video or transcript.');
+    if (!videoBase64) {
+      setError('Missing video.');
       return;
     }
+    if (diarizedTranscript.length === 0 && timecodedCaptions.length === 0) {
+        setError('Missing content. Please ensure video processing completed successfully.');
+        return;
+    }
+    
     setIsGenerating(true);
     const message = outputFormat === 'diagram' ? 'Generating diagram...' : 'Generating content...';
     setLoadingMessage(message);
@@ -329,7 +334,10 @@ export default function App() {
     setProgress(0);
 
     try {
-      const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
+      const transcriptString = diarizedTranscript.length > 0 
+        ? diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n')
+        : 'No speech detected.';
+        
       const generationPromise = generateGuide({
         videoBase64,
         mimeType: videoMimeType,

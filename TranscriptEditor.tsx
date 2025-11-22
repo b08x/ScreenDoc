@@ -16,7 +16,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import c from 'classnames';
 import { DiarizedSegment, Caption } from './api';
 import { exportToAss, exportToJson, downloadFile } from './exportUtils';
@@ -29,7 +29,16 @@ interface TranscriptEditorProps {
 }
 
 export default function TranscriptEditor({ transcript, captions, onTranscriptChange, onCaptionsChange }: TranscriptEditorProps) {
-    const [activeTab, setActiveTab] = useState<'transcript' | 'captions'>('transcript');
+    const [activeTab, setActiveTab] = useState<'transcript' | 'captions'>(transcript.length > 0 ? 'transcript' : 'captions');
+
+    // Auto-switch tabs if transcript is empty but captions are present
+    useEffect(() => {
+        if (transcript.length === 0 && captions.length > 0) {
+            setActiveTab('captions');
+        } else if (transcript.length > 0 && activeTab === 'captions' && captions.length === 0) {
+            setActiveTab('transcript');
+        }
+    }, [transcript.length, captions.length]);
 
     const handleTranscriptSegmentChange = (index: number, field: keyof DiarizedSegment, value: string) => {
         const newTranscript = [...transcript];
