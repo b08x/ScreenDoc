@@ -6,7 +6,7 @@
 // Copyright 2024 Google LLC
 
 // Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
+// you not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 
 //     https://www.apache.org/licenses/LICENSE-2.0
@@ -785,7 +785,6 @@ export default function App() {
                     <h2>Editor</h2>
                     {generatedContent && !isLoading && (
                     <div className="output-actions">
-                        {/* REMOVED STATIC EDIT BUTTON */}
                         <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
                         <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
                         {outputFormat !== 'diagram' && (

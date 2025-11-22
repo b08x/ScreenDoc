@@ -872,15 +872,19 @@ video {
   border: none;
   border-radius: 20px;
   padding: 8px 16px;
-  box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+  box-shadow: 0 4px 6px var(--shadow);
   display: flex;
   align-items: center;
   gap: 8px;
   animation: fadeIn 0.2s ease-out;
+  cursor: pointer;
+  font-family: 'Space Mono', monospace;
+  font-size: 0.9rem;
 }
+
 .ai-popup-btn:hover {
-  background-color: var(--primary);
   transform: translateX(-50%) scale(1.05);
+  opacity: 0.9;
 }
 
 @keyframes fadeIn {
