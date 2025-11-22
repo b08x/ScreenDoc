@@ -138,7 +138,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!skipAudio) {
         set({ loadingMessage: 'Generating speaker diarization...' });
         const transcribedText = await simulateProgress(api.transcribeVideo(apiParams), makeProgressUpdater(30, 65));
-        set({ diarizedTranscript: transcribedText.length > 0 ? transcribedText : [{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }] });
+        set({ diarizedTranscript: transcribedText });
       }
 
       set({ loadingMessage: 'Creating captions...' });
@@ -194,7 +194,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!videoBase64) return set({ error: 'Missing video.' });
     set({ isGenerating: true, loadingMessage: 'Generating content...', error: '', generatedContent: '', progress: 0 });
     try {
-      const transcriptString = diarizedTranscript.map(s => `${s.speaker}: ${s.text}`).join('\n');
+      const transcriptString = diarizedTranscript.length > 0 
+        ? diarizedTranscript.map(s => `${s.speaker}: ${s.text}`).join('\n') 
+        : 'No speech detected.';
       const content = await simulateProgress(api.generateGuide({ videoBase64, mimeType: videoMimeType, transcript: transcriptString, description: videoDescription, prompt: userPrompt, format: outputFormat }), (p) => set({ progress: p }));
       set({ generatedContent: content });
     } catch (e: any) {

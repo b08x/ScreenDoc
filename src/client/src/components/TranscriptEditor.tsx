@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useAppStore } from '../store';
 import { DiarizedSegment, Caption } from '../types';
 import { exportToAss, exportToJson, downloadFile } from '../utils/exportUtils';
@@ -11,6 +11,14 @@ export default function TranscriptEditor() {
         setTimecodedCaptions: state.setTimecodedCaptions,
     }));
     const [activeTab, setActiveTab] = useState<'transcript' | 'captions'>('transcript');
+
+    useEffect(() => {
+        if (diarizedTranscript.length === 0 && timecodedCaptions.length > 0) {
+            setActiveTab('captions');
+        } else if (diarizedTranscript.length > 0 && activeTab === 'captions' && timecodedCaptions.length === 0) {
+            setActiveTab('transcript');
+        }
+    }, [diarizedTranscript.length, timecodedCaptions.length]);
 
     const handleTranscriptChange = (index: number, field: keyof DiarizedSegment, value: string) => {
         const newTranscript = [...diarizedTranscript];

@@ -53,7 +53,6 @@ const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
 
 export default function App() {
   const store = useAppStore();
-  // FIX: Explicitly type the theme state with 'light' | 'dark' and add a check for the value from localStorage to prevent type widening to 'string'.
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const storedTheme = localStorage.getItem('theme');
     if (storedTheme === 'light' || storedTheme === 'dark') {
@@ -71,6 +70,8 @@ export default function App() {
   const [rewritePrompt, setRewritePrompt] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
   const [isPreviewCollapsed, setIsPreviewCollapsed] = useState(false);
+  const [aiPopup, setAiPopup] = useState<{ x: number; y: number } | null>(null);
+  
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const mediaRecorder = useRef<MediaRecorder | null>(null);
 
@@ -140,6 +141,7 @@ export default function App() {
     setIsRewriteModalOpen(false);
     setRewritePrompt('');
     setSelectionRange(null);
+    setAiPopup(null);
   };
 
   const handleExportZip = async () => {
@@ -200,6 +202,25 @@ export default function App() {
       useAppStore.setState({ error: 'Failed to create session zip file.' });
     } finally {
       useAppStore.setState({ isZipping: false });
+    }
+  };
+
+  const handleTextareaSelect = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget;
+    if (target.selectionStart !== target.selectionEnd) {
+      setSelectionRange({ start: target.selectionStart, end: target.selectionEnd });
+    } else {
+      setSelectionRange(null);
+      setAiPopup(null);
+    }
+  };
+
+  const handleTextareaMouseUp = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget;
+    if (target.selectionStart !== target.selectionEnd) {
+      setAiPopup({ x: e.clientX, y: e.clientY - 45 }); // Position slightly above cursor
+    } else {
+      setAiPopup(null);
     }
   };
 
@@ -290,7 +311,6 @@ export default function App() {
                 {store.videoBase64 && !isLoading && <button className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm border border-[--border] rounded-lg hover:bg-[--background-secondary] disabled:opacity-50" onClick={store.generateSummary} disabled={store.isSummarizing}><span className="material-symbols-outlined text-base leading-none">summarize</span> {store.isSummarizing ? 'Summarizing...' : 'Summarize'}</button>}
                 {store.generatedContent && !isLoading && (
                   <>
-                    <button onClick={() => setIsRewriteModalOpen(true)} disabled={!selectionRange || isRewriting} className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm border border-[--border] rounded-lg hover:bg-[--background-secondary] disabled:opacity-50"><span className="material-symbols-outlined text-base leading-none">auto_fix_high</span> Edit with AI</button>
                     <button onClick={() => navigator.clipboard.writeText(store.generatedContent)} className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm border border-[--border] rounded-lg hover:bg-[--background-secondary]"><span className="material-symbols-outlined text-base leading-none">content_copy</span></button>
                     <button onClick={() => downloadFile(`ScreenGuide.${store.outputFormat === 'diagram' ? 'mmd' : 'md'}`, new Blob([store.generatedContent]), 'text/plain')} className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm border border-[--border] rounded-lg hover:bg-[--background-secondary]"><span className="material-symbols-outlined text-base leading-none">save</span></button>
                   </>
@@ -321,7 +341,21 @@ export default function App() {
                 </div>
               )}
               {!isLoading && !store.generatedContent && <div className="flex justify-center items-center h-full text-[--text-light]"><p>Your generated content will appear here.</p></div>}
-              {!isLoading && store.generatedContent && <textarea ref={editorRef} value={store.generatedContent} onChange={e => store.setGeneratedContent(e.target.value)} onSelect={() => { const { selectionStart, selectionEnd } = editorRef.current!; setSelectionRange(selectionStart !== selectionEnd ? { start: selectionStart, end: selectionEnd } : null); }} className="w-full h-full border-none rounded-none p-6 resize-none text-sm leading-relaxed bg-[--background] text-[--text] focus:outline-none" aria-label="Markdown content editor" />}
+              {!isLoading && store.generatedContent && (
+                <textarea 
+                  ref={editorRef} 
+                  value={store.generatedContent} 
+                  onChange={e => {
+                    store.setGeneratedContent(e.target.value);
+                    setAiPopup(null);
+                  }}
+                  onSelect={handleTextareaSelect}
+                  onMouseUp={handleTextareaMouseUp}
+                  onScroll={() => setAiPopup(null)}
+                  className="w-full h-full border-none rounded-none p-6 resize-none text-sm leading-relaxed bg-[--background] text-[--text] focus:outline-none" 
+                  aria-label="Markdown content editor" 
+                />
+              )}
             </div>
             <div className="flex justify-end items-center px-6 py-4 border-t border-[--border] flex-shrink-0 gap-2">
               {store.generatedContent && !isLoading && store.outputFormat !== 'diagram' && <button onClick={handleExportZip} disabled={store.isZipping} className="inline-flex items-center justify-center gap-2 px-3 py-2 text-sm border border-[--border] rounded-lg hover:bg-[--background-secondary]"><span className="material-symbols-outlined text-base leading-none">archive</span> {store.isZipping ? 'Zipping...' : 'Export .zip'}</button>}
@@ -358,6 +392,17 @@ export default function App() {
 
       <ContextModal isOpen={isContextModalOpen} onClose={() => setIsContextModalOpen(false)} onSubmit={startProcessing} description={localDescription} setDescription={setLocalDescription} prompt={localPrompt} setPrompt={setLocalPrompt} skipAudio={skipAudio} setSkipAudio={setSkipAudio} />
       <RewriteModal isOpen={isRewriteModalOpen} onClose={() => setIsRewriteModalOpen(false)} onSubmit={handleRewrite} selectedText={selectionRange ? store.generatedContent.substring(selectionRange.start, selectionRange.end) : ''} prompt={rewritePrompt} setPrompt={setRewritePrompt} isRewriting={isRewriting} />
+      
+      {aiPopup && (
+        <button 
+          style={{ top: aiPopup.y, left: aiPopup.x, transform: 'translateX(-50%)' }}
+          className="fixed z-50 bg-[--primary-light] dark:bg-[--primary-dark] text-[--primary-text-light] dark:text-[--primary-text-dark] px-3 py-1.5 rounded-full shadow-lg flex items-center gap-2 animate-[fadeIn_0.2s_ease-out] hover:scale-105 transition-transform"
+          onClick={() => setIsRewriteModalOpen(true)}
+        >
+          <span className="material-symbols-outlined text-sm">auto_fix_high</span>
+          <span className="text-sm font-medium">Edit with AI</span>
+        </button>
+      )}
     </main>
   );
 }
