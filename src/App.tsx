@@ -25,15 +25,13 @@ import mermaid from 'mermaid';
 import MarkdownPreview from '@uiw/react-markdown-preview';
 import rehypeMermaid from 'rehype-mermaid';
 
-import {timeToSecs} from './utils/utils';
-// FIX: Import the `rewriteText` function to resolve the 'Cannot find name' error.
-import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary} from './api';
-import {DiarizedSegment, Caption} from './types';
-import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './utils/exportUtils';
-import VideoPlayer from './components/VideoPlayer';
-import TranscriptEditor from './components/TranscriptEditor';
-import ContextModal from './components/ContextModal';
-import RewriteModal from './components/RewriteModal';
+import {timeToSecs} from './utils';
+import {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, DiarizedSegment, Caption} from './api';
+import { markdownToRtf, downloadFile, exportToAss, exportToJson } from './exportUtils';
+import VideoPlayer from './VideoPlayer.jsx';
+import TranscriptEditor from './TranscriptEditor';
+import ContextModal from './ContextModal';
+import RewriteModal from './RewriteModal';
 
 const PROMPT_EXAMPLES = [
   'Generate a guide for absolute beginners',
@@ -166,15 +164,9 @@ const extractFrame = (videoUrl: string, time: number): Promise<Blob> => {
 
 
 export default function App() {
-  // FIX: Correctly type the theme state by checking the value from localStorage, ensuring it is 'dark' | 'light'.
-  const [theme, setTheme] = useState<'light' | 'dark'>(
-    () => {
-        const storedTheme = localStorage.getItem('screenguide-theme');
-        if (storedTheme === 'light' || storedTheme === 'dark') {
-            return storedTheme;
-        }
-        return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
-    }
+  // FIX: Add explicit type `'dark' | 'light'` to the theme state to satisfy component prop types.
+  const [theme] = useState<'dark' | 'light'>(
+    window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light',
   );
 
   // App state
@@ -194,31 +186,25 @@ export default function App() {
   const [userPrompt, setUserPrompt] = useState('');
   const [outputFormat, setOutputFormat] = useState('guide');
   const [generatedContent, setGeneratedContent] = useState('');
-  const [videoSummary, setVideoSummary] = useState('');
 
   // Loading states
   const [isProcessingVideo, setIsProcessingVideo] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isZipping, setIsZipping] = useState(false);
-  const [isSummarizing, setIsSummarizing] = useState(false);
   const [loadingMessage, setLoadingMessage] = useState('');
   const [progress, setProgress] = useState(0);
 
   // Modal and pending file state
   const [isContextModalOpen, setIsContextModalOpen] = useState(false);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [skipAudioProcessing, setSkipAudioProcessing] = useState(false);
 
-  // Retry state
-  const [captioningFailed, setCaptioningFailed] = useState(false);
-  const [isRetryingCaptions, setIsRetryingCaptions] = useState(false);
-  
   // Rewrite state
   const editorRef = useRef<HTMLTextAreaElement>(null);
   const [selectionRange, setSelectionRange] = useState<{ start: number, end: number } | null>(null);
   const [isRewriteModalOpen, setIsRewriteModalOpen] = useState(false);
   const [rewritePrompt, setRewritePrompt] = useState('');
   const [isRewriting, setIsRewriting] = useState(false);
+  const [aiPopup, setAiPopup] = useState<{ x: number, y: number } | null>(null);
 
 
   useEffect(() => {
@@ -227,14 +213,6 @@ export default function App() {
       theme: theme === 'dark' ? 'dark' : 'default',
     });
   }, [theme]);
-  
-  useEffect(() => {
-    localStorage.setItem('screenguide-theme', theme);
-  }, [theme]);
-
-  const toggleTheme = () => {
-      setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-  };
 
   const makeProgressUpdater = (startPercent: number, endPercent: number) => {
     return (taskProgress: number) => { // taskProgress is 0-100
@@ -255,17 +233,12 @@ export default function App() {
     setUserPrompt('');
     setOutputFormat('guide');
     setGeneratedContent('');
-    setVideoSummary('');
     setIsProcessingVideo(false);
     setIsGenerating(false);
     setIsZipping(false);
-    setIsSummarizing(false);
     setLoadingMessage('');
     setProgress(0);
     setPendingFile(null);
-    setCaptioningFailed(false);
-    setIsRetryingCaptions(false);
-    setSkipAudioProcessing(false);
   };
 
   const handleFileSelect = (file: File | null) => {
@@ -292,75 +265,46 @@ export default function App() {
     setVideoUrl(URL.createObjectURL(pendingFile));
     setIsProcessingVideo(true);
     setError('');
-    setCaptioningFailed(false);
 
     try {
-      if (skipAudioProcessing) {
-        // ---- Visual captions only flow ----
-        setLoadingMessage('Reading video file (1/2)...');
-        const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 50));
-        setVideoBase64(base64Data);
-        setVideoMimeType(pendingFile.type);
+      setLoadingMessage('Reading video file (1/4)...');
+      const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 30));
+      setVideoBase64(base64Data);
+      setVideoMimeType(pendingFile.type);
 
-        // Skip transcription and set an empty array
-        setDiarizedTranscript([]);
+      setLoadingMessage('Analyzing audio (2/4)...');
+      await simulateShortProgress(makeProgressUpdater(30, 40));
 
-        setLoadingMessage('Creating captions (2/2)...');
-        const captionsPromise = generateTimecodedCaptions({
-            videoBase64: base64Data,
-            mimeType: pendingFile.type,
-            description: videoDescription,
-            userPrompt: userPrompt,
-        });
-        const captions = await simulateProgress(captionsPromise, makeProgressUpdater(50, 100));
-        if (captions?.length > 0) {
-          setTimecodedCaptions(captions);
-        } else {
-          setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
-          setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
-          setCaptioningFailed(true);
-        }
+      setLoadingMessage('Generating speaker diarization (3/4)...');
+      const transcriptionPromise = transcribeVideo({
+          videoBase64: base64Data,
+          mimeType: pendingFile.type,
+          description: videoDescription,
+          userPrompt: userPrompt,
+      });
+      const transcribedText = await simulateProgress(transcriptionPromise, makeProgressUpdater(40, 70));
+      if (transcribedText.length > 0) {
+        setDiarizedTranscript(transcribedText);
       } else {
-        // ---- Full processing flow (existing) ----
-        setLoadingMessage('Reading video file (1/4)...');
-        const base64Data = await fileToBase64(pendingFile, makeProgressUpdater(0, 30));
-        setVideoBase64(base64Data);
-        setVideoMimeType(pendingFile.type);
-  
-        setLoadingMessage('Analyzing audio (2/4)...');
-        await simulateShortProgress(makeProgressUpdater(30, 40));
-  
-        setLoadingMessage('Generating speaker diarization (3/4)...');
-        const transcriptionPromise = transcribeVideo({
-            videoBase64: base64Data,
-            mimeType: pendingFile.type,
-            description: videoDescription,
-            userPrompt: userPrompt,
-        });
-        const transcribedText = await simulateProgress(transcriptionPromise, makeProgressUpdater(40, 70));
-        if (transcribedText.length > 0) {
-          setDiarizedTranscript(transcribedText);
-        } else {
-          setError(prev => prev ? `${prev}\nTranscription failed; providing an empty editor.` : 'Transcription failed; providing an empty editor.');
-          setDiarizedTranscript([{ speaker: 'Speaker 1', text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
-        }
-  
-        setLoadingMessage('Creating captions (4/4)...');
-        const captionsPromise = generateTimecodedCaptions({
-            videoBase64: base64Data,
-            mimeType: pendingFile.type,
-            description: videoDescription,
-            userPrompt: userPrompt,
-        });
-        const captions = await simulateProgress(captionsPromise, makeProgressUpdater(70, 100));
-        if (captions?.length > 0) {
-          setTimecodedCaptions(captions);
-        } else {
-          setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
-          setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
-          setCaptioningFailed(true);
-        }
+        // No speech detected. Do NOT show an error, just leave transcript empty.
+        setDiarizedTranscript([]);
       }
+
+      setLoadingMessage('Creating captions (4/4)...');
+      const captionsPromise = generateTimecodedCaptions({
+          videoBase64: base64Data,
+          mimeType: pendingFile.type,
+          description: videoDescription,
+          userPrompt: userPrompt,
+      });
+      const captions = await simulateProgress(captionsPromise, makeProgressUpdater(70, 100));
+      if (captions?.length > 0) {
+        setTimecodedCaptions(captions);
+      } else {
+        setError(prev => prev ? `${prev}\nCaptioning failed; providing an empty editor.` : 'Captioning failed; providing an empty editor.');
+        setTimecodedCaptions([{ text: '', startTime: '00:00:00.000', endTime: '00:00:05.000' }]);
+      }
+
     } catch (e) {
       console.error(e);
       setError('An error occurred during processing. Please try again.');
@@ -372,80 +316,17 @@ export default function App() {
     }
   };
 
-  const handleRetryCaptions = async () => {
-      if (!videoBase64 || !videoMimeType) return;
-      
-      setIsRetryingCaptions(true);
-      setError(prev => (prev || '').replace('Captioning failed; providing an empty editor.', '').replace('\n\n', '\n').trim());
-      setCaptioningFailed(false);
-      setProgress(0);
-      
-      try {
-          const captionsPromise = generateTimecodedCaptions({
-              videoBase64,
-              mimeType: videoMimeType,
-              description: videoDescription,
-              userPrompt: userPrompt,
-          });
-          
-          const captions = await simulateProgress(captionsPromise, setProgress);
-
-          if (captions?.length > 0) {
-              setTimecodedCaptions(captions);
-          } else {
-              setError(prev => {
-                const newError = 'Captioning failed; providing an empty editor.';
-                if (!prev || prev.trim() === '') return newError;
-                if (prev.includes(newError)) return prev;
-                return `${prev}\n${newError}`;
-              });
-              setCaptioningFailed(true);
-          }
-      } catch (e) {
-          console.error("Caption retry error:", e);
-          setError(prev => (prev || '') + '\nFailed to retry caption generation.');
-          setCaptioningFailed(true);
-      } finally {
-          setIsRetryingCaptions(false);
-          setProgress(0);
-      }
-  };
-
-  const handleGenerateSummary = async () => {
-    if (!videoBase64) {
-      setError('A video must be processed first to generate a summary.');
-      return;
-    }
-    setIsSummarizing(true);
-    setError('');
-    setVideoSummary('');
-
-    try {
-      const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
-      const summary = await generateSummary({
-        videoBase64,
-        mimeType: videoMimeType,
-        transcript: transcriptString,
-        description: videoDescription,
-      });
-      setVideoSummary(summary);
-    } catch (e) {
-      console.error(e);
-      setError('Failed to generate summary. Please try again.');
-    } finally {
-      setIsSummarizing(false);
-    }
-  };
 
   const handleGenerate = async () => {
     if (!videoBase64) {
       setError('Missing video.');
       return;
     }
-    if (diarizedTranscript.length === 0 && !skipAudioProcessing) {
-      setError('Missing transcript. Process a video first or use the "visual captions only" option.');
-      return;
+    if (diarizedTranscript.length === 0 && timecodedCaptions.length === 0) {
+        setError('Missing content. Please ensure video processing completed successfully.');
+        return;
     }
+    
     setIsGenerating(true);
     const message = outputFormat === 'diagram' ? 'Generating diagram...' : 'Generating content...';
     setLoadingMessage(message);
@@ -454,7 +335,10 @@ export default function App() {
     setProgress(0);
 
     try {
-      const transcriptString = diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n');
+      const transcriptString = diarizedTranscript.length > 0 
+        ? diarizedTranscript.map(segment => `${segment.speaker}: ${segment.text}`).join('\n')
+        : 'No speech detected.';
+        
       const generationPromise = generateGuide({
         videoBase64,
         mimeType: videoMimeType,
@@ -718,15 +602,23 @@ export default function App() {
       }
   };
   
-  const handleSelectionChange = () => {
-    if (editorRef.current) {
-        const { selectionStart, selectionEnd } = editorRef.current;
-        if (selectionStart !== selectionEnd) {
-            setSelectionRange({ start: selectionStart, end: selectionEnd });
-        } else {
-            setSelectionRange(null);
-        }
+  const handleSelectionChange = (e: React.SyntheticEvent<HTMLTextAreaElement>) => {
+    const target = e.currentTarget;
+    if (editorRef.current && target.selectionStart !== target.selectionEnd) {
+        setSelectionRange({ start: target.selectionStart, end: target.selectionEnd });
+    } else {
+        setSelectionRange(null);
+        setAiPopup(null);
     }
+  };
+
+  const handleTextareaMouseUp = (e: React.MouseEvent<HTMLTextAreaElement>) => {
+      const target = e.currentTarget;
+      if (target.selectionStart !== target.selectionEnd) {
+          setAiPopup({ x: e.clientX, y: e.clientY - 45 });
+      } else {
+          setAiPopup(null);
+      }
   };
 
   const handleRewrite = async () => {
@@ -756,6 +648,7 @@ export default function App() {
           setIsRewriteModalOpen(false);
           setRewritePrompt('');
           setSelectionRange(null);
+          setAiPopup(null);
           if (editorRef.current) {
               editorRef.current.blur(); // Deselect text
           }
@@ -788,13 +681,8 @@ export default function App() {
       onDragOver={(e) => e.preventDefault()}
     >
       <header>
-        <div className="header-content">
-          <h1>ScreenGuide AI</h1>
-          <p>Transform Screen Recordings into Technical Documentation</p>
-        </div>
-        <button onClick={toggleTheme} className="theme-toggle" aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
-            <span className="icon">{theme === 'light' ? 'dark_mode' : 'light_mode'}</span>
-        </button>
+        <h1>ScreenGuide AI</h1>
+        <p>Transform Screen Recordings into Technical Documentation</p>
       </header>
       <div className={c('container', {'preview-collapsed': isPreviewCollapsed})}>
         {/* INPUT PANEL */}
@@ -844,17 +732,7 @@ export default function App() {
             </div>
 
             {videoUrl && <VideoPlayer url={videoUrl} captions={timecodedCaptions}/>}
-            {error && (
-              <div className="error-message">
-                <span>{error}</span>
-                {captioningFailed && (
-                    <button onClick={handleRetryCaptions} disabled={isRetryingCaptions} className="button retry-button">
-                        <span className="icon">refresh</span>
-                        {isRetryingCaptions ? `Retrying... (${Math.round(progress)}%)` : 'Retry Captions'}
-                    </button>
-                )}
-              </div>
-            )}
+            {error && <div className="error-message">{error}</div>}
 
             {/* Step 2: Review Transcription */}
             <div className={c('step', {disabled: !videoBase64})}>
@@ -905,54 +783,24 @@ export default function App() {
             <section className="panel editor-panel">
                 <div className="panel-header">
                     <h2>Editor</h2>
+                    {generatedContent && !isLoading && (
                     <div className="output-actions">
-                        {videoBase64 && !isLoading && (
-                            <button onClick={handleGenerateSummary} disabled={isSummarizing}>
-                                <span className="icon">summarize</span> {isSummarizing ? 'Summarizing...' : 'Summarize'}
+                        {/* REMOVED STATIC EDIT BUTTON */}
+                        <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
+                        <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
+                        {outputFormat !== 'diagram' && (
+                            <button onClick={handleExportZip} disabled={isZipping}>
+                                <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
                             </button>
                         )}
-                        {generatedContent && !isLoading && (
-                        <>
-                            <button 
-                                onClick={() => setIsRewriteModalOpen(true)} 
-                                disabled={!selectionRange || isRewriting}
-                            >
-                                <span className="icon">auto_fix_high</span> Edit with AI
-                            </button>
-                            <button onClick={copyToClipboard}><span className="icon">content_copy</span> Copy</button>
-                            <button onClick={saveAsMarkdown}><span className="icon">save</span> Save as .{outputFormat === 'diagram' ? 'mmd' : 'md'}</button>
-                            {outputFormat !== 'diagram' && (
-                                <button onClick={handleExportZip} disabled={isZipping}>
-                                    <span className="icon">archive</span> {isZipping ? 'Zipping...' : 'Export as .zip'}
-                                </button>
-                            )}
-                            <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
-                            {outputFormat !== 'diagram' && (
-                                <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
-                            )}
-                            <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
-                        </>
+                        <button onClick={handleExportPdf}><span className="icon">picture_as_pdf</span> Export as .pdf</button>
+                        {outputFormat !== 'diagram' && (
+                            <button onClick={handleExportRtf}><span className="icon">description</span> Export as .rtf</button>
                         )}
+                        <button onClick={handleExportSessionData} disabled={isZipping}><span className="icon">dataset</span>{isZipping ? 'Exporting...' : 'Export Session'}</button>
                     </div>
+                    )}
                 </div>
-
-                {(isSummarizing || videoSummary) && (
-                    <div className="summary-panel-content">
-                        {isSummarizing && (
-                            <div className="loading-summary">
-                                <div className="spinner-small"></div>
-                                <p>Generating summary...</p>
-                            </div>
-                        )}
-                        {!isSummarizing && videoSummary && (
-                            <>
-                                <h3><span className="icon">auto_awesome</span> AI Summary</h3>
-                                <p>{videoSummary}</p>
-                            </>
-                        )}
-                    </div>
-                )}
-
                 <div className="panel-content">
                     {isLoading && (
                     <div className="loading">
@@ -973,8 +821,13 @@ export default function App() {
                         <textarea
                             ref={editorRef}
                             value={generatedContent}
-                            onChange={(e) => setGeneratedContent(e.target.value)}
+                            onChange={(e) => {
+                              setGeneratedContent(e.target.value);
+                              setAiPopup(null);
+                            }}
                             onSelect={handleSelectionChange}
+                            onMouseUp={handleTextareaMouseUp}
+                            onScroll={() => setAiPopup(null)}
                             className="editor-textarea-full"
                             aria-label="Markdown content editor"
                         />
@@ -1035,8 +888,6 @@ export default function App() {
         setDescription={setVideoDescription}
         prompt={userPrompt}
         setPrompt={setUserPrompt}
-        skipAudio={skipAudioProcessing}
-        setSkipAudio={setSkipAudioProcessing}
       />
       <RewriteModal
         isOpen={isRewriteModalOpen}
@@ -1047,6 +898,16 @@ export default function App() {
         setPrompt={setRewritePrompt}
         isRewriting={isRewriting}
       />
+      
+      {aiPopup && (
+        <button
+          className="ai-popup-btn"
+          style={{ top: aiPopup.y, left: aiPopup.x }}
+          onClick={() => setIsRewriteModalOpen(true)}
+        >
+          <span className="icon">auto_fix_high</span> Edit with AI
+        </button>
+      )}
     </main>
   );
 }

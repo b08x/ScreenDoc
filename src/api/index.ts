@@ -303,4 +303,4 @@ Generate only the summary paragraph.`;
 }
 
 
-export {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary};
+export {transcribeVideo, generateGuide, generateTimecodedCaptions, rewriteText, generateSummary, DiarizedSegment, Caption};
